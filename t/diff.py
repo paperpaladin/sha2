@@ -3,8 +3,13 @@
 
 SPDX-License-Identifier: GPL-3.0-or-later
 
-Reference 1 is CPython hashlib (OpenSSL or its own C code, either way not
-ours).  The exhaustive length sweep is the point: every length from 0 to 2048
+Three independent references, all of which must agree with us on every input:
+
+  1. CPython hashlib
+  2. GNU coreutils sha224sum / sha256sum / sha384sum / sha512sum
+  3. openssl dgst
+
+The exhaustive length sweep is the point: every length from 0 to 2048
 inclusive, so every padding case -- length field spilling into a second
 block, the exact block multiples, the empty input -- is covered rather than
 sampled.
@@ -18,7 +23,11 @@ import sys
 TST = sys.argv[1] if len(sys.argv) > 1 else "./t/tst"
 ALGS = ["sha224", "sha256", "sha384", "sha512", "sha512-224", "sha512-256"]
 HL = {"sha512-224": "sha512_224", "sha512-256": "sha512_256"}
+# coreutils has no tool for the truncated SHA-512 variants.
+COREUTILS = {"sha224": "sha224sum", "sha256": "sha256sum",
+             "sha384": "sha384sum", "sha512": "sha512sum"}
 fails = 0
+skipped = []
 
 
 def ok(cond, what):
@@ -54,6 +63,22 @@ def sweep(maxlen=2048):
            % (alg, maxlen, "" if not bad else " FAILED at " + str(bad[:8])))
 
 
+def have(prog):
+    return subprocess.run(["sh", "-c", "command -v " + prog],
+                          capture_output=True).returncode == 0
+
+
+def coreutils(alg, data):
+    """GNU coreutils.  Independent of hashlib: its own SHA code, not
+    OpenSSL's."""
+    prog = COREUTILS.get(alg)
+    if prog is None or not have(prog):
+        return None
+    out = subprocess.run([prog], input=data, capture_output=True,
+                         check=True).stdout.decode()
+    return out.split()[0]
+
+
 def run(args, data):
     p = subprocess.run([TST] + args, input=data, capture_output=True,
                        check=True)
@@ -78,6 +103,35 @@ def streaming():
                % (alg, n))
 
 
+def references():
+    """Every reference must agree with us, on inputs chosen to hit the cases
+    that break padding: the empty input and both sides of both boundaries."""
+    rng = random.Random(4231)
+    cases = [b"", b"abc", b"a" * 55, b"a" * 56, b"a" * 64, b"a" * 111,
+             b"a" * 112, b"a" * 119, b"a" * 120, b"a" * 128,
+             rng.randbytes(100000)]
+    for alg in ALGS:
+        agree = disagree = 0
+        missing = []
+        for data in cases:
+            ours = run(["hex", alg], data)
+            for name, ref in (("hashlib", hl(alg, data)),
+                              ("coreutils", coreutils(alg, data))):
+                if ref is None:
+                    if name not in missing:
+                        missing.append(name)
+                    continue
+                if ref == ours:
+                    agree += 1
+                else:
+                    disagree += 1
+        for m in missing:
+            skipped.append("%s has no %s equivalent" % (alg, m))
+        ok(disagree == 0 and agree > 0,
+           "%s: %d comparisons against independent implementations agree%s"
+           % (alg, agree, "" if not missing else " (%s)" % ", ".join(missing)))
+
+
 def clone_contract():
     """final() twice and update() after final() must match hashlib, whose
     contract we copied."""
@@ -97,6 +151,9 @@ def clone_contract():
 if __name__ == "__main__":
     sweep()
     streaming()
+    references()
     clone_contract()
+    for s in skipped:
+        print("skip - " + s)
     print("%d failed" % fails)
     sys.exit(1 if fails else 0)
