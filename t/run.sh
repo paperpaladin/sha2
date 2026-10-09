@@ -118,6 +118,50 @@ else
 	say "ok - CLI fails on an unopenable file"
 fi
 
+# A suite that cannot fail is not a suite.  Each sabotage is one character of
+# sha2.c, applied to a copy, compiled, and run: the suite must go red.  If a
+# sabotage passes, the harness is not testing what it claims and that is a
+# failure of this run, not a curiosity.
+printf -- '\n--- sabotage: the suite must go red for a broken implementation\n'
+sab() {
+	name=$1
+	expr=$2
+	sed "$expr" sha2.c > scratch/sab.c
+	if cmp -s scratch/sab.c sha2.c; then
+		say "not ok - sabotage [$name]: the edit did not apply"
+		return
+	fi
+	# shellcheck disable=SC2086
+	if ! $CC $CFLAGS -I. -o scratch/sabtst t/tst.c scratch/sab.c \
+		2>/dev/null; then
+		say "not ok - sabotage [$name]: does not compile"
+		return
+	fi
+	: > scratch/sab.log
+	./scratch/sabtst unit >> scratch/sab.log 2>&1 || :
+	if [ "$HAVE_CAVP" = 1 ]; then
+		./scratch/sabtst cavp sha256 \
+			"$VEC/shabytetestvectors/SHA256ShortMsg.rsp" \
+			>> scratch/sab.log 2>&1 || :
+		./scratch/sabtst monte sha512 \
+			"$VEC/shabytetestvectors/SHA512Monte.rsp" \
+			>> scratch/sab.log 2>&1 || :
+	fi
+	red=$(grep -c '^not ok' scratch/sab.log || :)
+	if [ "$red" -gt 0 ]; then
+		say "ok - sabotage [$name]: $red checks go red"
+	else
+		say "not ok - sabotage [$name]: suite still passes, so it is"
+		say "         not testing what it claims to test"
+	fi
+}
+sab "round constant K256[0] 0x428a2f98 -> 0x428a2f99" \
+	's/0x428a2f98u/0x428a2f99u/'
+sab "padding byte 0x80 -> 0x81" \
+	's/c\.buf\[c\.buflen++\] = 0x80;/c.buf[c.buflen++] = 0x81;/'
+sab "length encoding: bit count nlo<<3 -> nlo<<2" \
+	's/uint64_t bitlo = c\.nlo << 3;/uint64_t bitlo = c.nlo << 2;/'
+
 printf -- '\n=== oracles\n'
 printf -- '  1 NIST CAVP SHA byte vectors   %s\n' "$cavp_state"
 printf -- '  1 NIST CAVP HMAC vectors      %s\n' "$hmac_cavp_state"
