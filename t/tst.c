@@ -9,6 +9,7 @@
  *   tst pbkdf2 ALG C N     pbkdf2 with RFC 6070's inputs, C iters, N bytes
  *   tst cavp ALG FILE      NIST CAVP ShortMsg/LongMsg .rsp file
  *   tst monte ALG FILE     NIST CAVP Monte Carlo .rsp file (100k hashes)
+ *   tst hmaccavp FILE      NIST CAVP HMAC.rsp, all of [L=28,32,48,64]
  */
 #include "../sha2.h"
 #include <ctype.h>
@@ -535,6 +536,85 @@ static void monte(enum sha2_alg a, const char *path)
 	fails += bad != 0;
 }
 
+/* CAVP HMAC.rsp.  One file, five [L=nn] sections, each a tag length in bytes:
+ * 20 is HMAC-SHA-1, which this library does not implement and which is
+ * counted and reported as skipped rather than quietly ignored.  Records are
+ * Count/Klen/Tlen/Key/Msg/Mac; Tlen is a truncated tag, so the comparison is
+ * over the first Tlen bytes and the key length Klen varies either side of
+ * both block sizes, which is the coverage this oracle adds over RFC 4231.
+ */
+static void hmaccavp(const char *path)
+{
+	static char line[CAVP_LINE];
+	static unsigned char key[CAVP_MSG], msg[CAVP_MSG];
+	unsigned char mac[SHA2_DIGEST_MAX];
+	char g[2 * SHA2_DIGEST_MAX + 1];
+	FILE *f = fopen(path, "r");
+	size_t klen = 0, mlen = 0, tlen = 0;
+	int have = 0, skipped = 0;
+	enum sha2_alg a = SHA2_256;
+	int total[SHA2_NALG] = { 0 }, bad[SHA2_NALG] = { 0 };
+
+	if (!f) {
+		printf("not ok - CAVP %s: cannot open\n", base(path));
+		fails++;
+		return;
+	}
+	while (fgets(line, sizeof line, f)) {
+		if (!strncmp(line, "[L=", 3)) {
+			switch (atoi(line + 3)) {
+			case 28: a = SHA2_224; have = 1; break;
+			case 32: a = SHA2_256; have = 1; break;
+			case 48: a = SHA2_384; have = 1; break;
+			case 64: a = SHA2_512; have = 1; break;
+			default: have = 0; break;	/* L=20: SHA-1 */
+			}
+		} else if (!strncmp(line, "Klen = ", 7)) {
+			klen = (size_t)atol(line + 7);
+		} else if (!strncmp(line, "Tlen = ", 7)) {
+			tlen = (size_t)atol(line + 7);
+		} else if (!strncmp(line, "Key = ", 6)) {
+			if (hexdec(line + 6, key, sizeof key) != klen)
+				goto parse_error;
+		} else if (!strncmp(line, "Msg = ", 6)) {
+			mlen = hexdec(line + 6, msg, sizeof msg);
+		} else if (!strncmp(line, "Mac = ", 6)) {
+			if (!have) {
+				skipped++;
+				continue;
+			}
+			if (tlen == 0 || tlen > sha2_digest_size(a))
+				goto parse_error;
+			sha2_hmac(a, key, klen, msg, mlen, mac);
+			hex(mac, tlen, g);
+			total[a]++;
+			if (strcmp(g, trim(line + 6)))
+				bad[a]++;
+		}
+	}
+	fclose(f);
+	for (int i = 0; i < SHA2_NALG; i++) {
+		if (!total[i])
+			continue;
+		printf("%s - CAVP HMAC.rsp (hmac-%s): %d/%d vectors\n",
+		       bad[i] ? "not ok" : "ok", sha2_name(i),
+		       total[i] - bad[i], total[i]);
+		fails += bad[i] != 0;
+	}
+	if (!total[SHA2_256]) {
+		printf("not ok - CAVP HMAC.rsp: no vectors parsed\n");
+		fails++;
+	}
+	printf("skip - CAVP HMAC.rsp: %d HMAC-SHA-1 vectors, no SHA-1 here\n",
+	       skipped);
+	return;
+parse_error:
+	printf("not ok - CAVP HMAC.rsp: record does not parse"
+	       " (Klen %zu, Tlen %zu)\n", klen, tlen);
+	fails++;
+	fclose(f);
+}
+
 static void unit(void)
 {
 	/* FIPS 180-4 appendix B: the published worked examples. */
@@ -694,6 +774,8 @@ int main(int argc, char **argv)
 		unit();
 	else if (!strcmp(argv[1], "sweep") && argc == 4)
 		sweep(arg_alg(argv[2]), strtoul(argv[3], NULL, 0));
+	else if (!strcmp(argv[1], "hmaccavp") && argc == 3)
+		hmaccavp(argv[2]);
 	else if (!strcmp(argv[1], "monte") && argc == 4)
 		monte(arg_alg(argv[2]), argv[3]);
 	else if (!strcmp(argv[1], "cavp") && argc == 4)
