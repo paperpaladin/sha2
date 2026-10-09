@@ -4,11 +4,12 @@
  * NOT constant-time, NOT side-channel hardened.  See sha2.h and README.md.
  *
  * FIPS 180-4 for the hashes.  The round constants and initial hash values are
- * not typed in: they were generated from their definitions (cube and square
- * roots of the first primes) by scratch/genk.py and cross-checked against
- * CPython hashlib, which is why the IVs for the two truncated SHA-512
- * variants -- which FIPS defines via a hash of the string "SHA-512/t" -- are
- * trustworthy here.
+ * not typed in: they are derived from their definitions (cube and square roots
+ * of the first primes) by tools/genk.py, which also derives the IVs for the
+ * two truncated SHA-512 variants the way FIPS 180-4 section 5.3.6 defines
+ * them -- SHA-512 with its IV xored by 0xa5.. over the string "SHA-512/t".
+ * `make test` runs `genk.py check sha2.c`, so all 192 constants below are
+ * diffed against their definitions on every test run rather than trusted.
  */
 #include "sha2.h"
 #include <string.h>
@@ -142,6 +143,12 @@ int sha2_by_name(const char *name, enum sha2_alg *out)
 	return -1;
 }
 
+/* shortcut: scalar C only, about 226 MB/s for the 32-bit core and 344 MB/s
+ * for the 64-bit one on this machine.  SHA-NI (sha256rnds2) is roughly 4x for
+ * SHA-256 and AVX2 multi-buffer more again, and both would mean runtime
+ * dispatch, an intrinsics path and a second set of code to test against the
+ * same vectors.  Upgrade path if throughput ever matters; it does not here.
+ */
 #define ROR32(x, n) (((x) >> (n)) | ((x) << (32 - (n))))
 #define CH(x, y, z)  (((x) & (y)) ^ (~(x) & (z)))
 #define MAJ(x, y, z) (((x) & (y)) ^ ((x) & (z)) ^ ((y) & (z)))

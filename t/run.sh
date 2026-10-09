@@ -63,7 +63,14 @@ run() {
 		say "not ok - $label exited $st (crash, abort or sanitizer)"
 }
 
-printf -- '--- unit assertions (FIPS 180-4 examples, padding boundaries)\n'
+# The 192 constants in sha2.c must equal what their FIPS 180-4 definitions
+# produce -- cube and square roots of the first primes, and for the two
+# truncated variants, SHA-512 with a xored IV over the string "SHA-512/t".
+# tools/genk.py derives them and diffs them against the committed source.
+printf -- '--- oracle: constants in sha2.c match their definitions\n'
+run "tools/genk.py" python3 tools/genk.py check sha2.c
+
+printf -- '\n--- unit assertions (FIPS 180-4 examples, padding boundaries)\n'
 run "t/tst unit" ./t/tst unit
 
 # Oracle 1: NIST CAVP.  The pass rate is printed per algorithm per file, which
@@ -154,6 +161,9 @@ sab() {
 		return
 	fi
 	: > scratch/sab.log
+	# The constant check reads the source, so it sees a sabotaged table
+	# even though the vectors are what catch a sabotaged algorithm.
+	python3 tools/genk.py check scratch/sab.c >> scratch/sab.log 2>&1 || :
 	./scratch/sabtst unit >> scratch/sab.log 2>&1 || :
 	if [ "$HAVE_CAVP" = 1 ]; then
 		./scratch/sabtst cavp sha256 \
@@ -179,11 +189,13 @@ sab "length encoding: bit count nlo<<3 -> nlo<<2" \
 	's/uint64_t bitlo = c\.nlo << 3;/uint64_t bitlo = c.nlo << 2;/'
 
 printf -- '\n=== oracles\n'
-printf -- '  1 NIST CAVP SHA byte vectors   %s\n' "$cavp_state"
-printf -- '  1 NIST CAVP HMAC vectors      %s\n' "$hmac_cavp_state"
-printf -- '  2 CPython hashlib / hmac       ran (no network needed)\n'
-printf -- '  3 GNU coreutils sha*sum        ran (no network needed)\n'
-printf -- '  4 openssl dgst and kdf         ran (no network needed)\n'
+printf -- '  1 CAVP SHA byte vectors        %s\n' "$cavp_state"
+printf -- '  1 CAVP HMAC vectors            %s\n' "$hmac_cavp_state"
+printf -- '  2 constants vs FIPS 180-4      ran (no network needed)\n'
+printf -- '  3 CPython hashlib / hmac       ran (no network needed)\n'
+printf -- '  4 GNU coreutils sha*sum        ran (no network needed)\n'
+printf -- '  5 openssl dgst and kdf         ran (no network needed)\n'
+printf -- '  6 three sabotages, each red    ran (no network needed)\n'
 
 pass=$(grep -c '^ok - ' "$OUT")
 fail=$(grep -c '^not ok - ' "$OUT")
