@@ -3,6 +3,8 @@
  *
  *   tst unit               assertions that need no downloaded data
  *   tst sweep ALG N        digest of pat(L) for every L in 0..N, one per line
+ *   tst hex ALG            digest of stdin, read in 64kB chunks
+ *   tst chunks ALG SEED    digest of stdin, fed in pseudorandom chunk sizes
  */
 #include "../sha2.h"
 #include <stdio.h>
@@ -155,6 +157,64 @@ static void sweep(enum sha2_alg a, size_t maxlen)
 	free(p);
 }
 
+/* xorshift64.  Only used to pick chunk sizes, so its quality is irrelevant;
+ * what matters is that update() boundaries land all over the place and
+ * include 0 and lengths either side of the block size. */
+static uint64_t rs(uint64_t *s)
+{
+	*s ^= *s << 13;
+	*s ^= *s >> 7;
+	*s ^= *s << 17;
+	return *s;
+}
+
+/* Hash stdin.  chunk == 0 means fixed 64kB reads, otherwise the read size is
+ * drawn from the PRNG each time (0 to 4096 inclusive, so zero-length updates
+ * are exercised too). */
+static void digest_stdin(enum sha2_alg a, uint64_t seed)
+{
+	unsigned char buf[65536], d[SHA2_DIGEST_MAX];
+	char g[2 * SHA2_DIGEST_MAX + 1];
+	struct sha2_ctx c;
+	size_t n;
+
+	sha2_init(&c, a);
+	for (;;) {
+		size_t want = seed ? (size_t)(rs(&seed) % 4097) : sizeof buf;
+		if (want == 0) {
+			sha2_update(&c, buf, 0);
+			continue;
+		}
+		n = fread(buf, 1, want, stdin);
+		if (n == 0)
+			break;
+		sha2_update(&c, buf, n);
+	}
+	sha2_final(&c, d);
+	hex(d, sha2_digest_size(a), g);
+	printf("%s\n", g);
+}
+
+/* The machine-readable half of restate(): three digests on three lines, for
+ * t/diff.py to compare against hashlib doing the same three calls. */
+static void restate_dump(enum sha2_alg a)
+{
+	unsigned char d[SHA2_DIGEST_MAX];
+	char g[2 * SHA2_DIGEST_MAX + 1];
+	struct sha2_ctx c;
+	sha2_init(&c, a);
+	sha2_update(&c, "abc", 3);
+	for (int i = 0; i < 2; i++) {
+		sha2_final(&c, d);
+		hex(d, sha2_digest_size(a), g);
+		printf("%s\n", g);
+	}
+	sha2_update(&c, "def", 3);
+	sha2_final(&c, d);
+	hex(d, sha2_digest_size(a), g);
+	printf("%s\n", g);
+}
+
 static enum sha2_alg arg_alg(const char *s)
 {
 	enum sha2_alg a;
@@ -168,13 +228,20 @@ static enum sha2_alg arg_alg(const char *s)
 int main(int argc, char **argv)
 {
 	if (argc < 2) {
-		fprintf(stderr, "usage: tst unit | sweep ALG N\n");
+		fprintf(stderr, "usage: tst unit | sweep ALG N | hex ALG"
+			" | chunks ALG SEED\n");
 		return 2;
 	}
 	if (!strcmp(argv[1], "unit"))
 		unit();
 	else if (!strcmp(argv[1], "sweep") && argc == 4)
 		sweep(arg_alg(argv[2]), strtoul(argv[3], NULL, 0));
+	else if (!strcmp(argv[1], "restate") && argc == 3)
+		restate_dump(arg_alg(argv[2]));
+	else if (!strcmp(argv[1], "hex") && argc == 3)
+		digest_stdin(arg_alg(argv[2]), 0);
+	else if (!strcmp(argv[1], "chunks") && argc == 4)
+		digest_stdin(arg_alg(argv[2]), strtoull(argv[3], NULL, 0) | 1);
 	else {
 		fprintf(stderr, "tst: unknown subcommand %s\n", argv[1]);
 		return 2;

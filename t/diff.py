@@ -10,6 +10,8 @@ block, the exact block multiples, the empty input -- is covered rather than
 sampled.
 """
 import hashlib
+import os
+import random
 import subprocess
 import sys
 
@@ -53,7 +55,49 @@ def sweep(maxlen=2048):
            % (alg, maxlen, "" if not bad else " FAILED at " + str(bad[:8])))
 
 
+def run(args, data):
+    p = subprocess.run([TST] + args, input=data, capture_output=True,
+                       check=True)
+    return p.stdout.decode().split()[0]
+
+
+def streaming():
+    """Random data, random lengths up to 10MB, fed through the streaming API
+    in pseudorandom chunk sizes.  Must equal hashlib, and the one-shot read
+    must equal the chunked read."""
+    rng = random.Random(20261009)
+    sizes = [0, 1, 127, 128, 129, 4096] + \
+            [rng.randrange(1, 10 << 20) for _ in range(4)]
+    for n in sizes:
+        data = rng.randbytes(n)
+        for alg in ALGS:
+            want = hl(alg, data)
+            one = run(["hex", alg], data)
+            many = run(["chunks", alg, str(rng.randrange(1, 1 << 62))], data)
+            ok(one == want and many == want,
+               "%s: %d random bytes, one-shot and chunked, vs hashlib"
+               % (alg, n))
+
+
+def clone_contract():
+    """final() twice and update() after final() must match hashlib, whose
+    contract we copied."""
+    for alg in ALGS:
+        h = hashlib.new(HL.get(alg, alg))
+        h.update(b"abc")
+        first = h.hexdigest()
+        h.update(b"def")
+        second = h.hexdigest()
+        got = subprocess.run([TST, "restate", alg], capture_output=True,
+                             check=True).stdout.decode().split()
+        ok(got == [first, first, second],
+           "%s: hashlib agrees that final() does not consume the context"
+           % alg)
+
+
 if __name__ == "__main__":
     sweep()
+    streaming()
+    clone_contract()
     print("%d failed" % fails)
     sys.exit(1 if fails else 0)
