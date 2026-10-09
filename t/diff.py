@@ -16,8 +16,7 @@ import subprocess
 import sys
 
 TST = sys.argv[1] if len(sys.argv) > 1 else "./t/tst"
-# Grows as the algorithms land; the SHA-512 family is not implemented yet.
-ALGS = ["sha224", "sha256"]
+ALGS = ["sha224", "sha256", "sha384", "sha512", "sha512-224", "sha512-256"]
 HL = {"sha512-224": "sha512_224", "sha512-256": "sha512_256"}
 fails = 0
 

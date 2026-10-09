@@ -80,12 +80,56 @@ static void boundaries(void)
 		{ 129, "c12cb024a2e5551cca0e08fce8f1c5e3"
 		       "14555cc3fef6329ee994a3db752166ae" },
 	};
+	/* The same boundary for the 128-byte block: 111 bytes plus 0x80 leaves
+	 * exactly 16 free for the 128-bit length, 112 leaves 15 and spills. */
+	static const struct { int n; const char *md; } w[] = {
+		{ 111, "fa9121c7b32b9e01733d034cfc78cbf6"
+		       "7f926c7ed83e82200ef8681819692176"
+		       "0b4beff48404df811b95382827446167"
+		       "3c68d04e297b0eb7b2b4d60fc6b566a2" },
+		{ 112, "c01d080efd492776a1c43bd23dd99d0a"
+		       "2e626d481e16782e75d54c2503b5dc32"
+		       "bd05f0f1ba33e568b88fd2d970929b71"
+		       "9ecbb152f58f130a407c8830604b70ca" },
+		{ 119, "130396a75cb483f2eee8c56d8a668bb3"
+		       "d2641f5243212c0bee2bd33da096ad9e"
+		       "b8179fe18f9eaacf76e09fae9de4c3f1"
+		       "4ba13341e345be05bf76c182cc3468cb" },
+		{ 120, "f241de612b01aa2fa3cf01531d2a8e5e"
+		       "17fc761dfd48a704a834a47f57d6eade"
+		       "7804ecc39be42fdef16ec6adeaf7c01c"
+		       "2fd0c4cc97d3860907cfa4a3b36d0c05" },
+		{ 127, "828613968b501dc00a97e08c73b118aa"
+		       "8876c26b8aac93df128502ab360f91ba"
+		       "b50a51e088769a5c1eff4782ace147dc"
+		       "e3642554199876374291f5d921629502" },
+		{ 128, "b73d1929aa615934e61a871596b3f3b3"
+		       "3359f42b8175602e89f7e06e5f658a24"
+		       "3667807ed300314b95cacdd579f3e33a"
+		       "bdfbe351909519a846d465c59582f321" },
+		{ 129, "4f681e0bd53cda4b5a2041cc8a06f2ea"
+		       "bde44fb16c951fbd5b87702f07aeab61"
+		       "1565b19c47fde30587177ebb852e3971"
+		       "bbd8d3fd30da18d71037dfbd98420429" },
+		{ 239, "52c853cb8d907f3d4d6b889beb027985"
+		       "d7c273486d75f8baf26f80d24e90c74c"
+		       "6c3de3e22131582380a7d14d43f2941a"
+		       "31385439cd6ddc469f628015e50bf286" },
+		{ 240, "4c296d90c61052a62ffb1dd196f1b7b0"
+		       "9373b1f93e71836baebf89690546b759"
+		       "5684dbe9467a8e484fa0d1094272b434"
+		       "4a7c24f5fee8daedeb0bf549c985ab5f" },
+	};
 	char what[64];
-	unsigned char a[160];
+	unsigned char a[256];
 	memset(a, 'a', sizeof a);
 	for (size_t i = 0; i < sizeof v / sizeof *v; i++) {
 		sprintf(what, "padding boundary: sha256(%d * 'a')", v[i].n);
 		ckh(SHA2_256, a, (size_t)v[i].n, v[i].md, what);
+	}
+	for (size_t i = 0; i < sizeof w / sizeof *w; i++) {
+		sprintf(what, "padding boundary: sha512(%d * 'a')", w[i].n);
+		ckh(SHA2_512, a, (size_t)w[i].n, w[i].md, what);
 	}
 }
 
@@ -137,6 +181,18 @@ static void unit(void)
 	ckh(SHA2_256, "", 0,
 	    "e3b0c44298fc1c149afbf4c8996fb924"
 	    "27ae41e4649b934ca495991b7852b855", "sha256(empty)");
+
+	/* FIPS 180-4 appendix C. */
+	ckh(SHA2_512, "abc", 3,
+	    "ddaf35a193617abacc417349ae204131"
+	    "12e6fa4e89a97ea20a9eeee64b55d39a"
+	    "2192992a274fc1a836ba3c23a3feebbd"
+	    "454d4423643ce80e2a9ac94fa54ca49f", "FIPS 180-4 C.1 sha512(abc)");
+	ckh(SHA2_512, "", 0,
+	    "cf83e1357eefb8bdf1542850d66d8007"
+	    "d620e4050b5715dc83f4a921d36ce9ce"
+	    "47d0d13c5d85f2b0ff8318d2877eec2f"
+	    "63b931bd47417a81a538327af927da3e", "sha512(empty)");
 
 	boundaries();
 	restate();
