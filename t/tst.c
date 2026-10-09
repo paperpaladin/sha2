@@ -10,6 +10,7 @@
  *   tst cavp ALG FILE      NIST CAVP ShortMsg/LongMsg .rsp file
  *   tst monte ALG FILE     NIST CAVP Monte Carlo .rsp file (100k hashes)
  *   tst hmaccavp FILE      NIST CAVP HMAC.rsp, all of [L=28,32,48,64]
+ *   tst big ALG N          digest of pat(N), N up to and past 2^32 bits
  */
 #include "../sha2.h"
 #include <ctype.h>
@@ -753,6 +754,28 @@ static void pbkdf2_dump(enum sha2_alg a, unsigned long iters, size_t dklen)
 	printf("%s\n", g);
 }
 
+/* A message long enough that the bit length no longer fits in 32 bits.
+ * pat() is periodic with period 256 (31 is odd, so i*31+7 cycles mod 256),
+ * which is what lets t/diff.py build the same bytes in Python at a sane
+ * speed: it feeds one 256-byte block repeatedly instead of a generator. */
+static void big(enum sha2_alg a, uint64_t nbytes)
+{
+	unsigned char blk[1 << 20], d[SHA2_DIGEST_MAX];
+	char g[2 * SHA2_DIGEST_MAX + 1];
+	struct sha2_ctx c;
+
+	pattern(blk, sizeof blk);
+	sha2_init(&c, a);
+	while (nbytes) {
+		size_t n = nbytes < sizeof blk ? (size_t)nbytes : sizeof blk;
+		sha2_update(&c, blk, n);
+		nbytes -= n;
+	}
+	sha2_final(&c, d);
+	hex(d, sha2_digest_size(a), g);
+	printf("%s\n", g);
+}
+
 static enum sha2_alg arg_alg(const char *s)
 {
 	enum sha2_alg a;
@@ -774,6 +797,8 @@ int main(int argc, char **argv)
 		unit();
 	else if (!strcmp(argv[1], "sweep") && argc == 4)
 		sweep(arg_alg(argv[2]), strtoul(argv[3], NULL, 0));
+	else if (!strcmp(argv[1], "big") && argc == 4)
+		big(arg_alg(argv[2]), strtoull(argv[3], NULL, 0));
 	else if (!strcmp(argv[1], "hmaccavp") && argc == 3)
 		hmaccavp(argv[2]);
 	else if (!strcmp(argv[1], "monte") && argc == 4)

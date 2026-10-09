@@ -137,6 +137,33 @@ def hmac_keylens():
            % (alg, "" if not bad else " FAILED at " + str(bad[:8])))
 
 
+def big_message():
+    """A message of 536,870,913 bytes -- 4,294,967,304 bits, just over 2^32.
+
+    This is the only test that exercises the top half of the 64-bit length
+    field, so it is the only thing proving the length encoding is not
+    truncated to 32 bits.  One algorithm of each width is enough: the padding
+    code is shared and the widths differ only in the field size.
+
+    SHA-512's length field is 128 bits and its top 64 bits are unreachable --
+    that would need an exabyte of input -- so they stay untested, which the
+    README says plainly rather than implying coverage.
+    """
+    n = (1 << 29) + 1
+    blk = bytes((i * 31 + 7) & 0xFF for i in range(1 << 20))
+    for alg in ("sha256", "sha512"):
+        h = hashlib.new(HL.get(alg, alg))
+        left = n
+        while left:
+            k = min(left, len(blk))
+            h.update(blk[:k])
+            left -= k
+        ours = subprocess.run([TST, "big", alg, str(n)], capture_output=True,
+                              check=True).stdout.decode().split()[0]
+        ok(ours == h.hexdigest(),
+           "%s: %d bytes (%d bits, past 2^32) vs hashlib" % (alg, n, n * 8))
+
+
 def pbkdf2():
     """RFC 6070's inputs with HMAC-SHA-2, against hashlib and openssl kdf.
     RFC 6070's own digests are HMAC-SHA-1, which this library does not
@@ -228,6 +255,7 @@ if __name__ == "__main__":
     sweep()
     streaming()
     hmac_keylens()
+    big_message()
     pbkdf2()
     references()
     clone_contract()
