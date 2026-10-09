@@ -11,9 +11,11 @@
  *   tst monte ALG FILE     NIST CAVP Monte Carlo .rsp file (100k hashes)
  *   tst hmaccavp FILE      NIST CAVP HMAC.rsp, all of [L=28,32,48,64]
  *   tst big ALG N          digest of pat(N), N up to and past 2^32 bits
+ *   tst bench              throughput per algorithm, and PBKDF2 iterations/s
  */
 #include "../sha2.h"
 #include <ctype.h>
+#include <time.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -148,6 +150,7 @@ static void restate(void)
 	unsigned char d1[SHA2_DIGEST_MAX], d2[SHA2_DIGEST_MAX];
 	unsigned char ref[SHA2_DIGEST_MAX];
 	char g[2 * SHA2_DIGEST_MAX + 1], w[2 * SHA2_DIGEST_MAX + 1];
+	char what[80];
 	struct sha2_ctx c;
 
 	for (int a = 0; a < SHA2_NALG; a++) {
@@ -158,29 +161,21 @@ static void restate(void)
 		sha2_final(&c, d2);
 		hex(d1, n, g);
 		hex(d2, n, w);
-		sprintf(g + 2 * n, " (%s)", sha2_name(a));
-		sprintf(w + 2 * n, " (%s)", sha2_name(a));
-		ck("final() twice gives the same digest", g, w);
+		sprintf(what, "%s: final() twice gives the same digest",
+			sha2_name(a));
+		ck(what, g, w);
 
 		sha2_update(&c, "def", 3);
 		sha2_final(&c, d1);
 		sha2(a, "abcdef", 6, ref);
 		hex(d1, n, g);
 		hex(ref, n, w);
-		sprintf(g + 2 * n, " (%s)", sha2_name(a));
-		sprintf(w + 2 * n, " (%s)", sha2_name(a));
-		ck("update() after final() continues the message", g, w);
+		sprintf(what, "%s: update() after final() continues the"
+			" message", sha2_name(a));
+		ck(what, g, w);
 	}
 }
 
-/* RFC 4231 test cases 1 to 7, all four algorithms the RFC covers.  Case 5 is
- * the truncation case; truncating the tag is the caller's job, so the full
- * tag is checked here.  Cases 6 and 7 use a 131-byte key, longer than both
- * block sizes, which is the step (hash the key first) that implementations
- * get wrong.  Case 2's key is 4 bytes and case 4's is 25, so keys shorter
- * than, equal to (the 64-byte sweep in t/diff.py) and longer than the block
- * size are all covered.
- */
 static void hmac_rfc4231(void)
 {
 	static const struct {
@@ -776,6 +771,43 @@ static void big(enum sha2_alg a, uint64_t nbytes)
 	printf("%s\n", g);
 }
 
+/* clock() rather than clock_gettime(): ISO C, so no feature macro, and CPU
+ * time is the right measure for a pure-compute loop anyway. */
+static double now(void)
+{
+	return (double)clock() / CLOCKS_PER_SEC;
+}
+
+/* shortcut: wall clock over a fixed 256MB, no warmup and no repeat-until-
+ * stable.  Good enough to notice a 2x regression, which is all this number is
+ * for; if it ever needs to resolve less than that, use perf. */
+static void bench(void)
+{
+	static unsigned char blk[1 << 22];
+	unsigned char d[SHA2_DIGEST_MAX];
+	const size_t total = 256u << 20;
+
+	pattern(blk, sizeof blk);
+	for (int a = 0; a < SHA2_NALG; a++) {
+		struct sha2_ctx c;
+		double t0;
+		sha2_init(&c, a);
+		t0 = now();
+		for (size_t n = 0; n < total; n += sizeof blk)
+			sha2_update(&c, blk, sizeof blk);
+		sha2_final(&c, d);
+		printf("%-11s %6.1f MB/s\n", sha2_name(a),
+		       (double)total / (1 << 20) / (now() - t0));
+	}
+	{
+		double t0 = now();
+		const uint32_t iters = 200000;
+		sha2_pbkdf2(SHA2_256, "password", 8, "salt", 4, iters, d, 32);
+		printf("%-11s %6.0f PBKDF2 iterations/s\n", "sha256",
+		       iters / (now() - t0));
+	}
+}
+
 static enum sha2_alg arg_alg(const char *s)
 {
 	enum sha2_alg a;
@@ -797,6 +829,8 @@ int main(int argc, char **argv)
 		unit();
 	else if (!strcmp(argv[1], "sweep") && argc == 4)
 		sweep(arg_alg(argv[2]), strtoul(argv[3], NULL, 0));
+	else if (!strcmp(argv[1], "bench") && argc == 2)
+		bench();
 	else if (!strcmp(argv[1], "big") && argc == 4)
 		big(arg_alg(argv[2]), strtoull(argv[3], NULL, 0));
 	else if (!strcmp(argv[1], "hmaccavp") && argc == 3)

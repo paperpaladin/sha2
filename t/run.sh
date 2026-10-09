@@ -47,8 +47,24 @@ else
 	HAVE_CAVP=0
 fi
 
+# A crash is a failure.  Piping through tee loses the exit status, and the
+# first ASAN run of this suite aborted mid-way through the unit assertions
+# while the run still reported "0 failed" -- so the status is checked
+# explicitly and turned into a red line of its own.
+# A pipeline's exit status is tee's, so the output goes to a file first and
+# the status is read from the command itself.
+run() {
+	label=$1
+	shift
+	st=0
+	"$@" > scratch/last.log 2>&1 || st=$?
+	tee -a "$OUT" < scratch/last.log
+	[ "$st" = 0 ] ||
+		say "not ok - $label exited $st (crash, abort or sanitizer)"
+}
+
 printf -- '--- unit assertions (FIPS 180-4 examples, padding boundaries)\n'
-./t/tst unit 2>&1 | tee -a "$OUT"
+run "t/tst unit" ./t/tst unit
 
 # Oracle 1: NIST CAVP.  The pass rate is printed per algorithm per file, which
 # is the number this repo is judged on.
@@ -64,22 +80,22 @@ if [ "$HAVE_CAVP" = 1 ]; then
 			f="$VEC/shabytetestvectors/$stem$kind.rsp"
 			[ -s "$f" ] || { say "not ok - CAVP $stem$kind.rsp missing from the archive"; continue; }
 			case $kind in
-			Monte) ./t/tst monte "$a" "$f" 2>&1 | tee -a "$OUT" ;;
-			*) ./t/tst cavp "$a" "$f" 2>&1 | tee -a "$OUT" ;;
+			Monte) run "tst monte $a" ./t/tst monte "$a" "$f" ;;
+			*) run "tst cavp $a" ./t/tst cavp "$a" "$f" ;;
 			esac
 		done
 	done
 	cavp_state='ran'
 fi
 if [ -s "$VEC/HMAC.rsp" ]; then
-	./t/tst hmaccavp "$VEC/HMAC.rsp" 2>&1 | tee -a "$OUT"
+	run "tst hmaccavp" ./t/tst hmaccavp "$VEC/HMAC.rsp"
 	hmac_cavp_state='ran'
 fi
 
 # Oracle: CPython hashlib, over every length from 0 to 2048 so that no
 # padding or block-boundary case is merely sampled.
 printf -- '\n--- oracle: differential against CPython hashlib\n'
-python3 t/diff.py ./t/tst 2>&1 | tee -a "$OUT"
+run "t/diff.py" python3 t/diff.py ./t/tst
 
 # The CLI prints coreutils' format, so coreutils itself is the oracle for it:
 # byte-for-byte identical output on the same files, for the four algorithms it
