@@ -1,7 +1,8 @@
 /* t/tst.c -- every C-side test in one program, picked by subcommand.
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- *   tst unit           assertions that need no downloaded data
+ *   tst unit               assertions that need no downloaded data
+ *   tst sweep ALG N        digest of pat(L) for every L in 0..N, one per line
  */
 #include "../sha2.h"
 #include <stdio.h>
@@ -9,6 +10,14 @@
 #include <stdlib.h>
 
 static int fails;
+
+/* The sweep input: byte i is i*31+7.  Defined here and recomputed
+ * independently in t/diff.py, so neither side can be fed the other's data. */
+static void pattern(unsigned char *p, size_t n)
+{
+	for (size_t i = 0; i < n; i++)
+		p[i] = (unsigned char)(i * 31 + 7);
+}
 
 static void hex(const unsigned char *d, size_t n, char *out)
 {
@@ -54,14 +63,41 @@ static void unit(void)
 	    "27ae41e4649b934ca495991b7852b855", "sha256(empty)");
 }
 
+static void sweep(enum sha2_alg a, size_t maxlen)
+{
+	unsigned char *p = malloc(maxlen + 1), d[SHA2_DIGEST_MAX];
+	char g[2 * SHA2_DIGEST_MAX + 1];
+	if (!p)
+		exit(2);
+	pattern(p, maxlen + 1);
+	for (size_t n = 0; n <= maxlen; n++) {
+		sha2(a, p, n, d);
+		hex(d, sha2_digest_size(a), g);
+		printf("%zu %s\n", n, g);
+	}
+	free(p);
+}
+
+static enum sha2_alg arg_alg(const char *s)
+{
+	enum sha2_alg a;
+	if (sha2_by_name(s, &a)) {
+		fprintf(stderr, "tst: unknown algorithm %s\n", s);
+		exit(2);
+	}
+	return a;
+}
+
 int main(int argc, char **argv)
 {
 	if (argc < 2) {
-		fprintf(stderr, "usage: tst unit\n");
+		fprintf(stderr, "usage: tst unit | sweep ALG N\n");
 		return 2;
 	}
 	if (!strcmp(argv[1], "unit"))
 		unit();
+	else if (!strcmp(argv[1], "sweep") && argc == 4)
+		sweep(arg_alg(argv[2]), strtoul(argv[3], NULL, 0));
 	else {
 		fprintf(stderr, "tst: unknown subcommand %s\n", argv[1]);
 		return 2;

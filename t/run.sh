@@ -20,6 +20,11 @@ $CC $CFLAGS -o t/tst t/tst.c sha2.c || { echo "not ok - compile t/tst"; exit 1; 
 printf -- '--- unit assertions (FIPS 180-4 examples, padding boundaries)\n'
 ./t/tst unit 2>&1 | tee -a "$OUT"
 
+# Oracle: CPython hashlib, over every length from 0 to 2048 so that no
+# padding or block-boundary case is merely sampled.
+printf -- '\n--- oracle: differential against CPython hashlib\n'
+python3 t/diff.py ./t/tst 2>&1 | tee -a "$OUT"
+
 pass=$(grep -c '^ok - ' "$OUT")
 fail=$(grep -c '^not ok - ' "$OUT")
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
