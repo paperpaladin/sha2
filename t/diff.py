@@ -15,6 +15,7 @@ block, the exact block multiples, the empty input -- is covered rather than
 sampled.
 """
 import hashlib
+import hmac
 import os
 import random
 import subprocess
@@ -116,6 +117,26 @@ def streaming():
                % (alg, n))
 
 
+def hmac_keylens():
+    """Every key length from 0 to 200, against Python's hmac.  That spans
+    shorter than, equal to and longer than both block sizes (64 and 128), so
+    the hash-the-long-key branch is covered on both sides of both."""
+    for alg in ALGS:
+        out = subprocess.run([TST, "hmacsweep", alg, "200"],
+                             capture_output=True, check=True).stdout.decode()
+        lines = out.split()
+        bad = []
+        for i in range(0, len(lines), 2):
+            n = int(lines[i])
+            want = hmac.new(pattern(n), b"the message",
+                            lambda d=b"": hashlib.new(HL.get(alg, alg), d))
+            if lines[i + 1] != want.hexdigest():
+                bad.append(n)
+        ok(len(lines) // 2 == 201 and not bad,
+           "hmac-%s: key lengths 0..200 vs python hmac%s"
+           % (alg, "" if not bad else " FAILED at " + str(bad[:8])))
+
+
 def references():
     """Every reference must agree with us, on inputs chosen to hit the cases
     that break padding: the empty input and both sides of both boundaries."""
@@ -165,6 +186,7 @@ def clone_contract():
 if __name__ == "__main__":
     sweep()
     streaming()
+    hmac_keylens()
     references()
     clone_contract()
     for s in skipped:

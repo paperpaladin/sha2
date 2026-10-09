@@ -49,4 +49,16 @@ size_t sha2_block_size(enum sha2_alg alg);
 const char *sha2_name(enum sha2_alg alg);
 int sha2_by_name(const char *name, enum sha2_alg *out);	/* 0 on success */
 
+/* HMAC, RFC 2104.  Streaming so that PBKDF2 and the CLI need no concatenation
+ * buffer.  Copying the context with plain assignment is supported, which is
+ * what makes PBKDF2's inner loop cheap. */
+struct sha2_hmac_ctx { struct sha2_ctx in, out; };
+
+void sha2_hmac_init(struct sha2_hmac_ctx *c, enum sha2_alg alg,
+		    const void *key, size_t keylen);
+void sha2_hmac_update(struct sha2_hmac_ctx *c, const void *data, size_t len);
+void sha2_hmac_final(const struct sha2_hmac_ctx *c, unsigned char *out);
+void sha2_hmac(enum sha2_alg alg, const void *key, size_t keylen,
+	       const void *msg, size_t msglen, unsigned char *out);
+
 #endif

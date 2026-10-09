@@ -318,3 +318,58 @@ void sha2(enum sha2_alg alg, const void *data, size_t len, unsigned char *out)
 	sha2_update(&c, data, len);
 	sha2_final(&c, out);
 }
+
+/* ---------------------------------------------------------------- HMAC ---
+ * RFC 2104.  The key is zero-padded to the block size, or hashed first if it
+ * is longer than the block size -- which is the step implementations skip and
+ * the reason RFC 4231 cases 6 and 7 use a 131-byte key.
+ *
+ * Not constant-time, and sha2_hmac_final() does not compare anything: a
+ * caller checking a tag has to decide for itself whether it needs a
+ * constant-time comparison.  This file will not do it for them.
+ */
+void sha2_hmac_init(struct sha2_hmac_ctx *c, enum sha2_alg alg,
+		    const void *key, size_t keylen)
+{
+	unsigned char k[SHA2_BLOCK_MAX] = { 0 }, pad[SHA2_BLOCK_MAX];
+	size_t bs = sha2_block_size(alg), i;
+
+	if (keylen > bs)
+		sha2(alg, key, keylen, k);
+	else if (keylen)
+		memcpy(k, key, keylen);
+
+	for (i = 0; i < bs; i++)
+		pad[i] = k[i] ^ 0x36;
+	sha2_init(&c->in, alg);
+	sha2_update(&c->in, pad, bs);
+
+	for (i = 0; i < bs; i++)
+		pad[i] = k[i] ^ 0x5c;
+	sha2_init(&c->out, alg);
+	sha2_update(&c->out, pad, bs);
+}
+
+void sha2_hmac_update(struct sha2_hmac_ctx *c, const void *data, size_t len)
+{
+	sha2_update(&c->in, data, len);
+}
+
+void sha2_hmac_final(const struct sha2_hmac_ctx *c, unsigned char *out)
+{
+	unsigned char d[SHA2_DIGEST_MAX];
+	struct sha2_ctx o = c->out;
+
+	sha2_final(&c->in, d);
+	sha2_update(&o, d, sha2_digest_size(c->in.alg));
+	sha2_final(&o, out);
+}
+
+void sha2_hmac(enum sha2_alg alg, const void *key, size_t keylen,
+	       const void *msg, size_t msglen, unsigned char *out)
+{
+	struct sha2_hmac_ctx c;
+	sha2_hmac_init(&c, alg, key, keylen);
+	sha2_hmac_update(&c, msg, msglen);
+	sha2_hmac_final(&c, out);
+}
