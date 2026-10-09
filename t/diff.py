@@ -7,7 +7,7 @@ Three independent references, all of which must agree with us on every input:
 
   1. CPython hashlib
   2. GNU coreutils sha224sum / sha256sum / sha384sum / sha512sum
-  3. openssl dgst
+  3. openssl dgst (a reference only -- the library does not link against it)
 
 The exhaustive length sweep is the point: every length from 0 to 2048
 inclusive, so every padding case -- length field spilling into a second
@@ -79,6 +79,19 @@ def coreutils(alg, data):
     return out.split()[0]
 
 
+def openssl(alg, data):
+    """openssl dgst.  Covers all six, including the two coreutils has no tool
+    for.  openssl is a reference here and never a dependency: nothing in the
+    library links against it."""
+    if not have("openssl"):
+        return None
+    p = subprocess.run(["openssl", "dgst", "-" + alg, "-r"], input=data,
+                       capture_output=True)
+    if p.returncode != 0:
+        return None
+    return p.stdout.decode().split()[0]
+
+
 def run(args, data):
     p = subprocess.run([TST] + args, input=data, capture_output=True,
                        check=True)
@@ -116,7 +129,8 @@ def references():
         for data in cases:
             ours = run(["hex", alg], data)
             for name, ref in (("hashlib", hl(alg, data)),
-                              ("coreutils", coreutils(alg, data))):
+                              ("coreutils", coreutils(alg, data)),
+                              ("openssl", openssl(alg, data))):
                 if ref is None:
                     if name not in missing:
                         missing.append(name)
