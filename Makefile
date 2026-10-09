@@ -4,21 +4,38 @@
 # nothing more.  -ffile-prefix-map keeps the build reproducible: without it -g
 # writes $(CURDIR) into DWARF .debug_line_str.
 
-CC      ?= gcc
+# `CC ?= gcc` does not work: make has a built-in default of `cc`, so the
+# variable is already set and ?= never fires.
+ifeq ($(origin CC),default)
+CC := gcc
+endif
 CFLAGS  ?= -std=c11 -Wall -Wextra -Wpedantic -O2 -g -ffile-prefix-map=$(CURDIR)=.
 ASAN     = -std=c11 -Wall -Wextra -Wpedantic -O1 -g \
 	   -fsanitize=address,undefined -fno-omit-frame-pointer \
 	   -ffile-prefix-map=$(CURDIR)=.
 
-.PHONY: all test clean
+.PHONY: all test test-asan bench clean
 
-# No sources yet, and every commit in this repo has to build: the targets
-# that need sha2.c arrive with sha2.c in the next commit.
-all:
-	@echo 'nothing to build yet'
+all: sha2.o
+
+sha2.o: sha2.c sha2.h
+	$(CC) $(CFLAGS) -c -o $@ sha2.c
+
+# The CLI is main() inside sha2.c behind -DSHA2_CLI, so the library stays one
+# translation unit and the repo stays at two source files.
+sha2: sha2.c sha2.h
+	$(CC) $(CFLAGS) -DSHA2_CLI -o $@ sha2.c
 
 test: all
-	@echo 'no tests yet'
+	CC='$(CC)' CFLAGS='$(CFLAGS)' ./t/run.sh
+
+test-asan:
+	CC='$(CC)' CFLAGS='$(ASAN)' UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+		./t/run.sh
+
+bench: all
+	$(CC) $(CFLAGS) -o t/tst t/tst.c sha2.c
+	./t/tst bench
 
 clean:
 	rm -f sha2.o sha2 t/tst
