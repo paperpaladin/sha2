@@ -1,0 +1,7 @@
+# scratch space: downloaded CAVP vectors, generated test data, sabotage builds.
+# Repo-local on purpose -- /tmp is shared with other work and has collided.
+scratch/
+# build products
+*.o
+sha2
+t/tst
