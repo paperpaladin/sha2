@@ -8,6 +8,7 @@
  *   tst hmacsweep ALG N    hmac over pat() keys of every length 0..N
  *   tst pbkdf2 ALG C N     pbkdf2 with RFC 6070's inputs, C iters, N bytes
  *   tst cavp ALG FILE      NIST CAVP ShortMsg/LongMsg .rsp file
+ *   tst monte ALG FILE     NIST CAVP Monte Carlo .rsp file (100k hashes)
  */
 #include "../sha2.h"
 #include <ctype.h>
@@ -459,6 +460,81 @@ static void cavp(enum sha2_alg a, const char *path)
 	fails += bad != 0;
 }
 
+/* CAVP Monte Carlo, from the SHS validation system description:
+ *
+ *   MD[0] = MD[1] = MD[2] = Seed
+ *   for i = 3 to 1002:  MD[i] = SHA(MD[i-3] || MD[i-2] || MD[i-1])
+ *   checkpoint = Seed = MD[1002],  100 times
+ *
+ * 100,000 chained hashes per algorithm, each one's input the output of the
+ * last three.  That is the mode that catches state handling a single hash
+ * cannot: an init() that does not clear the buffer, a length counter that is
+ * not reset, a final() that corrupts the state it just read.  Our final()
+ * pads a copy and is never called twice on the same context here, but the
+ * 100 checkpoints are the proof rather than the claim.
+ */
+static void monte(enum sha2_alg a, const char *path)
+{
+	static char line[CAVP_LINE];
+	unsigned char md[3][SHA2_DIGEST_MAX], seed[SHA2_DIGEST_MAX];
+	unsigned char m[3 * SHA2_DIGEST_MAX], next[SHA2_DIGEST_MAX];
+	char g[2 * SHA2_DIGEST_MAX + 1];
+	size_t dsz = sha2_digest_size(a);
+	FILE *f = fopen(path, "r");
+	int total = 0, bad = 0, firstbad = -1, haveseed = 0;
+
+	if (!f) {
+		printf("not ok - CAVP %s: cannot open\n", base(path));
+		fails++;
+		return;
+	}
+	while (fgets(line, sizeof line, f)) {
+		if (!strncmp(line, "Seed = ", 7)) {
+			if (hexdec(line + 7, seed, sizeof seed) != dsz) {
+				printf("not ok - CAVP %s: Seed is not %zu"
+				       " bytes\n", base(path), dsz);
+				fails++;
+				fclose(f);
+				return;
+			}
+			haveseed = 1;
+		} else if (!strncmp(line, "MD = ", 5) && haveseed) {
+			for (int k = 0; k < 3; k++)
+				memcpy(md[k], seed, dsz);
+			for (int i = 3; i <= 1002; i++) {
+				memcpy(m, md[0], dsz);
+				memcpy(m + dsz, md[1], dsz);
+				memcpy(m + 2 * dsz, md[2], dsz);
+				sha2(a, m, 3 * dsz, next);
+				memcpy(md[0], md[1], dsz);
+				memcpy(md[1], md[2], dsz);
+				memcpy(md[2], next, dsz);
+			}
+			memcpy(seed, md[2], dsz);
+			hex(seed, dsz, g);
+			total++;
+			if (strcmp(g, trim(line + 5))) {
+				if (firstbad < 0)
+					firstbad = total - 1;
+				bad++;
+			}
+		}
+	}
+	fclose(f);
+	if (total == 0) {
+		printf("not ok - CAVP %s: no checkpoints parsed\n", base(path));
+		fails++;
+		return;
+	}
+	printf("%s - CAVP %s (%s): %d/%d checkpoints, %d chained hashes",
+	       bad ? "not ok" : "ok", base(path), sha2_name(a),
+	       total - bad, total, total * 1000);
+	if (bad)
+		printf(", first failure at COUNT = %d", firstbad);
+	printf("\n");
+	fails += bad != 0;
+}
+
 static void unit(void)
 {
 	/* FIPS 180-4 appendix B: the published worked examples. */
@@ -618,6 +694,8 @@ int main(int argc, char **argv)
 		unit();
 	else if (!strcmp(argv[1], "sweep") && argc == 4)
 		sweep(arg_alg(argv[2]), strtoul(argv[3], NULL, 0));
+	else if (!strcmp(argv[1], "monte") && argc == 4)
+		monte(arg_alg(argv[2]), argv[3]);
 	else if (!strcmp(argv[1], "cavp") && argc == 4)
 		cavp(arg_alg(argv[2]), argv[3]);
 	else if (!strcmp(argv[1], "pbkdf2") && argc == 5)

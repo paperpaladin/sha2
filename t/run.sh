@@ -49,10 +49,13 @@ if [ "$HAVE_CAVP" = 1 ]; then
 		sha512-256) stem=SHA512_256 ;;
 		*) stem=$(printf '%s' "$a" | tr 'a-z' 'A-Z') ;;
 		esac
-		for kind in ShortMsg LongMsg; do
+		for kind in ShortMsg LongMsg Monte; do
 			f="$VEC/shabytetestvectors/$stem$kind.rsp"
 			[ -s "$f" ] || { say "not ok - CAVP $stem$kind.rsp missing from the archive"; continue; }
-			./t/tst cavp "$a" "$f" 2>&1 | tee -a "$OUT"
+			case $kind in
+			Monte) ./t/tst monte "$a" "$f" 2>&1 | tee -a "$OUT" ;;
+			*) ./t/tst cavp "$a" "$f" 2>&1 | tee -a "$OUT" ;;
+			esac
 		done
 	done
 	cavp_state='ran'
