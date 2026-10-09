@@ -425,3 +425,77 @@ int sha2_pbkdf2(enum sha2_alg alg, const void *pw, size_t pwlen,
 	}
 	return 0;
 }
+
+#ifdef SHA2_CLI
+/* ----------------------------------------------------------------- CLI ---
+ * sha2 [-a ALG] [FILE...] -- hashes stdin when given no files.  The output
+ * format is coreutils', two spaces and the name, so that
+ * `sha2 -a sha256 f | cmp - <(sha256sum f)` is a usable test and the output
+ * feeds `sha256sum -c`.
+ */
+#include <stdio.h>
+
+static int digest_stream(FILE *f, enum sha2_alg alg, const char *name)
+{
+	struct sha2_ctx c;
+	unsigned char buf[65536], d[SHA2_DIGEST_MAX];
+	size_t n, i;
+
+	sha2_init(&c, alg);
+	while ((n = fread(buf, 1, sizeof buf, f)) > 0)
+		sha2_update(&c, buf, n);
+	if (ferror(f)) {
+		fprintf(stderr, "sha2: %s: read error\n", name);
+		return -1;
+	}
+	sha2_final(&c, d);
+	for (i = 0; i < sha2_digest_size(alg); i++)
+		printf("%02x", d[i]);
+	printf("  %s\n", name);
+	return 0;
+}
+
+int main(int argc, char **argv)
+{
+	enum sha2_alg alg = SHA2_256;
+	int i = 1, bad = 0;
+
+	for (; i < argc && argv[i][0] == '-' && argv[i][1]; i++) {
+		if (!strcmp(argv[i], "--"))
+			{ i++; break; }
+		if (!strcmp(argv[i], "-a") && i + 1 < argc) {
+			if (sha2_by_name(argv[++i], &alg)) {
+				fprintf(stderr, "sha2: unknown algorithm %s\n",
+					argv[i]);
+				return 2;
+			}
+			continue;
+		}
+		fprintf(stderr,
+			"usage: sha2 [-a ALG] [FILE...]\n"
+			"ALG: sha224 sha256 sha384 sha512 sha512-224"
+			" sha512-256 (default sha256)\n"
+			"Reads stdin when given no files, or for \"-\".\n");
+		return strcmp(argv[i], "-h") ? 2 : 0;
+	}
+
+	if (i == argc)
+		return digest_stream(stdin, alg, "-") ? 1 : 0;
+
+	for (; i < argc; i++) {
+		FILE *f;
+		if (!strcmp(argv[i], "-")) {
+			bad |= digest_stream(stdin, alg, "-") != 0;
+			continue;
+		}
+		if (!(f = fopen(argv[i], "rb"))) {
+			fprintf(stderr, "sha2: %s: cannot open\n", argv[i]);
+			bad = 1;
+			continue;
+		}
+		bad |= digest_stream(f, alg, argv[i]) != 0;
+		fclose(f);
+	}
+	return bad;
+}
+#endif

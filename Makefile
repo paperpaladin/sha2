@@ -16,7 +16,7 @@ ASAN     = -std=c11 -Wall -Wextra -Wpedantic -O1 -g \
 
 .PHONY: all test test-asan bench clean
 
-all: sha2.o
+all: sha2.o sha2
 
 sha2.o: sha2.c sha2.h
 	$(CC) $(CFLAGS) -c -o $@ sha2.c
