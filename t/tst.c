@@ -6,6 +6,7 @@
  *   tst hex ALG            digest of stdin, read in 64kB chunks
  *   tst chunks ALG SEED    digest of stdin, fed in pseudorandom chunk sizes
  *   tst hmacsweep ALG N    hmac over pat() keys of every length 0..N
+ *   tst pbkdf2 ALG C N     pbkdf2 with RFC 6070's inputs, C iters, N bytes
  */
 #include "../sha2.h"
 #include <stdio.h>
@@ -304,6 +305,51 @@ static void hmac_rfc4231(void)
 	}
 }
 
+/* PBKDF2.
+ *
+ * RFC 6070's published vectors are PBKDF2-HMAC-SHA-1 and SHA-1 is not in this
+ * library, so they cannot be checked here.  What is used instead:
+ *
+ *   - RFC 6070's *inputs* (password/salt/1, 2 and 4096 iterations, dkLen 20)
+ *     with HMAC-SHA-256, where the expected values come from CPython
+ *     hashlib.pbkdf2_hmac and openssl kdf -- see t/diff.py, which runs both.
+ *   - RFC 7914 section 11, which publishes two PBKDF2-HMAC-SHA-256 vectors.
+ *     Those are the authoritative, external ones, and they are below.
+ */
+static void pbkdf2_published(void)
+{
+	unsigned char dk[64];
+	char g[129];
+
+	/* RFC 7914 section 11, vector 1: P "passwd", S "salt", c 1, dkLen 64 */
+	if (sha2_pbkdf2(SHA2_256, "passwd", 6, "salt", 4, 1, dk, 64))
+		fails++;
+	hex(dk, 64, g);
+	ck("RFC 7914 PBKDF2-HMAC-SHA-256 c=1 dkLen=64", g,
+	   "55ac046e56e3089fec1691c22544b605"
+	   "f94185216dde0465e68b9d57c20dacbc"
+	   "49ca9cccf179b645991664b39d77ef31"
+	   "7c71b845b1e30bd509112041d3a19783");
+
+	/* vector 2: P "Password", S "NaCl", c 80000, dkLen 64 */
+	if (sha2_pbkdf2(SHA2_256, "Password", 8, "NaCl", 4, 80000, dk, 64))
+		fails++;
+	hex(dk, 64, g);
+	ck("RFC 7914 PBKDF2-HMAC-SHA-256 c=80000 dkLen=64", g,
+	   "4ddcd8f60b98be21830cee5ef22701f9"
+	   "641a4418d04c0414aeff08876b34ab56"
+	   "a1d425a1225833549adb841b51c9b317"
+	   "6a272bdebba1d078478f62b397f33c8d");
+
+	/* The two documented failure returns. */
+	ck("pbkdf2 rejects iters == 0",
+	   sha2_pbkdf2(SHA2_256, "p", 1, "s", 1, 0, dk, 1) ? "rejected" : "ok",
+	   "rejected");
+	ck("pbkdf2 accepts iters == 1",
+	   sha2_pbkdf2(SHA2_256, "p", 1, "s", 1, 1, dk, 1) ? "rejected" : "ok",
+	   "ok");
+}
+
 static void unit(void)
 {
 	/* FIPS 180-4 appendix B: the published worked examples. */
@@ -335,6 +381,7 @@ static void unit(void)
 	boundaries();
 	restate();
 	hmac_rfc4231();
+	pbkdf2_published();
 }
 
 static void sweep(enum sha2_alg a, size_t maxlen)
@@ -428,6 +475,19 @@ static void hmacsweep(enum sha2_alg a, size_t maxlen)
 	free(k);
 }
 
+/* RFC 6070's inputs ("password", "salt"), any iteration count and length, for
+ * t/diff.py to put to hashlib and openssl. */
+static void pbkdf2_dump(enum sha2_alg a, unsigned long iters, size_t dklen)
+{
+	unsigned char dk[256];
+	char g[513];
+	if (dklen > sizeof dk ||
+	    sha2_pbkdf2(a, "password", 8, "salt", 4, (uint32_t)iters, dk, dklen))
+		exit(2);
+	hex(dk, dklen, g);
+	printf("%s\n", g);
+}
+
 static enum sha2_alg arg_alg(const char *s)
 {
 	enum sha2_alg a;
@@ -449,6 +509,9 @@ int main(int argc, char **argv)
 		unit();
 	else if (!strcmp(argv[1], "sweep") && argc == 4)
 		sweep(arg_alg(argv[2]), strtoul(argv[3], NULL, 0));
+	else if (!strcmp(argv[1], "pbkdf2") && argc == 5)
+		pbkdf2_dump(arg_alg(argv[2]), strtoul(argv[3], NULL, 0),
+			    strtoul(argv[4], NULL, 0));
 	else if (!strcmp(argv[1], "hmacsweep") && argc == 4)
 		hmacsweep(arg_alg(argv[2]), strtoul(argv[3], NULL, 0));
 	else if (!strcmp(argv[1], "restate") && argc == 3)

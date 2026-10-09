@@ -61,4 +61,11 @@ void sha2_hmac_final(const struct sha2_hmac_ctx *c, unsigned char *out);
 void sha2_hmac(enum sha2_alg alg, const void *key, size_t keylen,
 	       const void *msg, size_t msglen, unsigned char *out);
 
+/* PBKDF2, RFC 8018 section 5.2.  Returns 0, or -1 for iters == 0 or a derived
+ * key longer than (2^32 - 1) * digest size.  No allocation, no memory
+ * locking, no wiping: see the warning at the top of this file. */
+int sha2_pbkdf2(enum sha2_alg alg, const void *pw, size_t pwlen,
+		const void *salt, size_t saltlen, uint32_t iters,
+		unsigned char *out, size_t outlen);
+
 #endif

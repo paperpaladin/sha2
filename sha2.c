@@ -373,3 +373,55 @@ void sha2_hmac(enum sha2_alg alg, const void *key, size_t keylen,
 	sha2_hmac_update(&c, msg, msglen);
 	sha2_hmac_final(&c, out);
 }
+
+/* -------------------------------------------------------------- PBKDF2 ---
+ * RFC 8018 section 5.2.  T_i = F(P, S, c, i), F being the xor of c
+ * HMAC iterations starting from HMAC(P, S || INT_BE32(i)).
+ *
+ * The HMAC context with the password already absorbed is built once and
+ * copied per iteration, which is the whole reason HMAC here is streaming:
+ * neither the salt||counter concatenation nor the key schedule is redone.
+ */
+int sha2_pbkdf2(enum sha2_alg alg, const void *pw, size_t pwlen,
+		const void *salt, size_t saltlen, uint32_t iters,
+		unsigned char *out, size_t outlen)
+{
+	struct sha2_hmac_ctx base, c;
+	unsigned char u[SHA2_DIGEST_MAX], t[SHA2_DIGEST_MAX], be[4];
+	size_t hl = sha2_digest_size(alg), i, j, n;
+	uint32_t blk;
+
+	if (iters == 0)
+		return -1;
+	/* dkLen must fit in (2^32 - 1) blocks; the counter is 32 bits. */
+	if (outlen / hl > 0xfffffffeu)
+		return -1;
+
+	sha2_hmac_init(&base, alg, pw, pwlen);
+	for (blk = 1; outlen; blk++) {
+		be[0] = (unsigned char)(blk >> 24);
+		be[1] = (unsigned char)(blk >> 16);
+		be[2] = (unsigned char)(blk >> 8);
+		be[3] = (unsigned char)blk;
+
+		c = base;
+		sha2_hmac_update(&c, salt, saltlen);
+		sha2_hmac_update(&c, be, 4);
+		sha2_hmac_final(&c, u);
+		memcpy(t, u, hl);
+
+		for (i = 1; i < iters; i++) {
+			c = base;
+			sha2_hmac_update(&c, u, hl);
+			sha2_hmac_final(&c, u);
+			for (j = 0; j < hl; j++)
+				t[j] ^= u[j];
+		}
+
+		n = outlen < hl ? outlen : hl;
+		memcpy(out, t, n);
+		out += n;
+		outlen -= n;
+	}
+	return 0;
+}

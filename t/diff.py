@@ -137,6 +137,47 @@ def hmac_keylens():
            % (alg, "" if not bad else " FAILED at " + str(bad[:8])))
 
 
+def pbkdf2():
+    """RFC 6070's inputs with HMAC-SHA-2, against hashlib and openssl kdf.
+    RFC 6070's own digests are HMAC-SHA-1, which this library does not
+    implement, so the iteration counts are the RFC's and the expected values
+    are two independent implementations' rather than the RFC's."""
+    for alg in ALGS:
+        for iters in (1, 2, 4096):
+            for dklen in (1, 20, 100):
+                ours = subprocess.run(
+                    [TST, "pbkdf2", alg, str(iters), str(dklen)],
+                    capture_output=True, check=True).stdout.decode().split()[0]
+                want = hashlib.pbkdf2_hmac(HL.get(alg, alg), b"password",
+                                           b"salt", iters, dklen).hex()
+                refs = [("hashlib", want)]
+                o = openssl_kdf(alg, iters, dklen)
+                if o is None:
+                    if "openssl kdf" not in skipped:
+                        skipped.append("openssl kdf")
+                else:
+                    refs.append(("openssl kdf", o))
+                bad = [n for n, r in refs if r != ours]
+                ok(not bad, "pbkdf2-%s c=%d dkLen=%d vs %s%s"
+                   % (alg, iters, dklen, " and ".join(n for n, _ in refs),
+                      "" if not bad else " DISAGREE: " + str(bad)))
+
+
+def openssl_kdf(alg, iters, dklen):
+    if not have("openssl"):
+        return None
+    name = {"sha512-224": "SHA512-224", "sha512-256": "SHA512-256"}.get(
+        alg, alg.upper())
+    p = subprocess.run(["openssl", "kdf", "-keylen", str(dklen),
+                        "-kdfopt", "digest:" + name,
+                        "-kdfopt", "pass:password", "-kdfopt", "salt:salt",
+                        "-kdfopt", "iter:" + str(iters), "PBKDF2"],
+                       capture_output=True)
+    if p.returncode != 0:
+        return None
+    return p.stdout.decode().strip().replace(":", "").lower()
+
+
 def references():
     """Every reference must agree with us, on inputs chosen to hit the cases
     that break padding: the empty input and both sides of both boundaries."""
@@ -187,6 +228,7 @@ if __name__ == "__main__":
     sweep()
     streaming()
     hmac_keylens()
+    pbkdf2()
     references()
     clone_contract()
     for s in skipped:
