@@ -7,8 +7,10 @@
  *   tst chunks ALG SEED    digest of stdin, fed in pseudorandom chunk sizes
  *   tst hmacsweep ALG N    hmac over pat() keys of every length 0..N
  *   tst pbkdf2 ALG C N     pbkdf2 with RFC 6070's inputs, C iters, N bytes
+ *   tst cavp ALG FILE      NIST CAVP ShortMsg/LongMsg .rsp file
  */
 #include "../sha2.h"
+#include <ctype.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -350,6 +352,113 @@ static void pbkdf2_published(void)
 	   "ok");
 }
 
+/* ------------------------------------------------------- NIST CAVP ---
+ * The .rsp format: "Len = <bits>", "Msg = <hex>", "MD = <hex>", in that
+ * order, with "[L = <bytes>]" headers and # comments.  Len = 0 carries
+ * "Msg = 00" which means the empty message, not one zero byte -- a parser
+ * that misses that scores one wrong answer and looks like an implementation
+ * bug.
+ *
+ * The algorithm is not in the file (SHA-224 and SHA-512/224 both say
+ * [L = 28]), so it comes from the caller, which reads it off the filename.
+ */
+static size_t hexdec(const char *s, unsigned char *out, size_t cap)
+{
+	size_t n = 0;
+	for (;;) {
+		int hi, lo;
+		while (*s == ' ' || *s == '\t')
+			s++;
+		if (!isxdigit((unsigned char)s[0]) ||
+		    !isxdigit((unsigned char)s[1]))
+			break;
+		hi = s[0] <= '9' ? s[0] - '0' : (s[0] | 32) - 'a' + 10;
+		lo = s[1] <= '9' ? s[1] - '0' : (s[1] | 32) - 'a' + 10;
+		if (n == cap)
+			exit(2);
+		out[n++] = (unsigned char)(hi * 16 + lo);
+		s += 2;
+	}
+	return n;
+}
+
+static char *trim(char *s)
+{
+	size_t n = strlen(s);
+	while (n && (s[n - 1] == '\n' || s[n - 1] == '\r' || s[n - 1] == ' '))
+		s[--n] = 0;
+	return s;
+}
+
+static const char *base(const char *p)
+{
+	const char *s = strrchr(p, '/');
+	return s ? s + 1 : p;
+}
+
+#define CAVP_LINE 65536
+#define CAVP_MSG  32768
+
+static void cavp(enum sha2_alg a, const char *path)
+{
+	static char line[CAVP_LINE];
+	static unsigned char msg[CAVP_MSG];
+	unsigned char d[SHA2_DIGEST_MAX];
+	char g[2 * SHA2_DIGEST_MAX + 1];
+	FILE *f = fopen(path, "r");
+	long len = -1;
+	size_t mlen = 0;
+	int total = 0, bad = 0, firstbad = -1;
+
+	if (!f) {
+		printf("not ok - CAVP %s: cannot open\n", base(path));
+		fails++;
+		return;
+	}
+	while (fgets(line, sizeof line, f)) {
+		if (!strncmp(line, "Len = ", 6)) {
+			len = atol(line + 6);
+		} else if (!strncmp(line, "Msg = ", 6)) {
+			mlen = hexdec(line + 6, msg, sizeof msg);
+			if (len == 0) {
+				mlen = 0;	/* "Msg = 00" means empty */
+			} else if (len < 0 || (size_t)len / 8 != mlen) {
+				/* Declared bit length and decoded byte count
+				 * must agree, or the parser is broken and a
+				 * wrong answer would look like a hash bug. */
+				printf("not ok - CAVP %s: Len = %ld but %zu"
+				       " bytes of Msg\n", base(path), len, mlen);
+				fails++;
+				fclose(f);
+				return;
+			}
+		} else if (!strncmp(line, "MD = ", 5)) {
+			sha2(a, msg, mlen, d);
+			hex(d, sha2_digest_size(a), g);
+			total++;
+			if (strcmp(g, trim(line + 5))) {
+				if (firstbad < 0)
+					firstbad = total;
+				bad++;
+			}
+		}
+	}
+	fclose(f);
+	/* A parser that matched nothing must not report a pass. */
+	if (total == 0) {
+		printf("not ok - CAVP %s: no vectors parsed\n", base(path));
+		fails++;
+		return;
+	}
+	printf("%s - CAVP %s (%s): %d/%d vectors",
+	       bad ? "not ok" : "ok", base(path), sha2_name(a),
+	       total - bad, total);
+	if (bad)
+		printf(", first failure at vector %d", firstbad);
+	printf("\n");
+	fails += bad != 0;
+}
+
 static void unit(void)
 {
 	/* FIPS 180-4 appendix B: the published worked examples. */
@@ -509,6 +618,8 @@ int main(int argc, char **argv)
 		unit();
 	else if (!strcmp(argv[1], "sweep") && argc == 4)
 		sweep(arg_alg(argv[2]), strtoul(argv[3], NULL, 0));
+	else if (!strcmp(argv[1], "cavp") && argc == 4)
+		cavp(arg_alg(argv[2]), argv[3]);
 	else if (!strcmp(argv[1], "pbkdf2") && argc == 5)
 		pbkdf2_dump(arg_alg(argv[2]), strtoul(argv[3], NULL, 0),
 			    strtoul(argv[4], NULL, 0));
