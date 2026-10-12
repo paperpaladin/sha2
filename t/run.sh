@@ -188,25 +188,61 @@ sab "padding byte 0x80 -> 0x81" \
 sab "length encoding: bit count nlo<<3 -> nlo<<2" \
 	's/uint64_t bitlo = c\.nlo << 3;/uint64_t bitlo = c.nlo << 2;/'
 
+# The roster reports what happened. Lines 2 through 6 used to be literal
+# printf statements that said "ran" whichever way the run went: openssl is
+# only ever invoked from t/diff.py behind a have("openssl") guard, so on a
+# machine without it the roster claimed an oracle that had been skipped, and
+# coreutils has no tool for sha512-224 or sha512-256 so its "ran" was
+# overstated even here. A roster that cannot say "SKIPPED" is decoration.
+tool_state() {
+	if command -v "$1" >/dev/null 2>&1; then
+		printf 'ran'
+	else
+		printf 'SKIPPED (%s not installed)' "$1"
+	fi
+}
+co_state=$(tool_state sha256sum)
+ssl_state=$(tool_state openssl)
+case $co_state in
+ran) co_state='ran (4 of 6: no tool for sha512-224/256)' ;;
+esac
+nskip=$(grep '^skip - ' "$OUT" | wc -l)
+
 printf -- '\n=== oracles\n'
 printf -- '  1 CAVP SHA byte vectors        %s\n' "$cavp_state"
 printf -- '  1 CAVP HMAC vectors            %s\n' "$hmac_cavp_state"
-printf -- '  2 constants vs FIPS 180-4      ran (no network needed)\n'
+printf -- '  2 constants vs FIPS 180-4      ran (192 constants, no network needed)\n'
 printf -- '  3 CPython hashlib / hmac       ran (no network needed)\n'
-printf -- '  4 GNU coreutils sha*sum        ran (no network needed)\n'
-printf -- '  5 openssl dgst and kdf         ran (no network needed)\n'
+printf -- '  4 GNU coreutils sha*sum        %s\n' "$co_state"
+printf -- '  5 openssl dgst and kdf         %s\n' "$ssl_state"
 printf -- '  6 three sabotages, each red    ran (no network needed)\n'
+printf -- '  %s check(s) skipped; see the "skip - " lines above\n' "$nskip"
 
 pass=$(grep -c '^ok - ' "$OUT")
 fail=$(grep -c '^not ok - ' "$OUT")
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 
-case $cavp_state$hmac_cavp_state in
+# Each CAVP download is checked on its own. This was
+# `case $cavp_state$hmac_cavp_state in SKIPPED*)`, which tests the
+# concatenation of the two: "ranSKIPPED" does not match SKIPPED*, so a
+# missing HMAC vector set produced no warning and SHA2_REQUIRE_CAVP=1 did not
+# fail on it. Only a skip of the *first* one was ever noticed.
+cavp_missing=''
+case $cavp_state in SKIPPED*) cavp_missing='SHA byte vectors' ;; esac
+case $hmac_cavp_state in
 SKIPPED*)
-	printf 'WARNING: the CAVP vectors did not download, so this run proves\n'
+	if [ -n "$cavp_missing" ]; then
+		cavp_missing="$cavp_missing and HMAC vectors"
+	else
+		cavp_missing='HMAC vectors'
+	fi
+	;;
+esac
+if [ -n "$cavp_missing" ]; then
+	printf 'WARNING: the CAVP %s did not download, so this run proves\n' \
+		"$cavp_missing"
 	printf 'much less than a full one.  SHA2_REQUIRE_CAVP=1 makes that a\n'
 	printf 'failure instead of a warning.\n'
 	[ "${SHA2_REQUIRE_CAVP:-0}" = 1 ] && exit 1
-	;;
-esac
+fi
 [ "$fail" -eq 0 ]
