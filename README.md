@@ -29,7 +29,7 @@ that is the only claim being made.
 ## Score against the official vectors
 
 NIST CAVP byte-oriented test vectors, fetched by `t/run.sh` from
-csrc.nist.gov.  Pass rate per algorithm per file, which is the number this
+csrc.nist.gov.  Pass rate per algorithm per file, the number this
 repo exists to report:
 
 ```
@@ -110,7 +110,7 @@ What the differential tests feed them:
 
 - FIPS 180-4 appendices B and C: the worked examples for SHA-256 and SHA-512.
 - RFC 4231 cases 1 to 7, all four algorithms the RFC covers: 28 HMAC vectors.
-  Cases 6 and 7 use a 131-byte key, longer than both block sizes, which is the
+  Cases 6 and 7 use a 131-byte key, longer than both block sizes, the
   hash-the-key-first step implementations skip.
 - RFC 7914 section 11: two PBKDF2-HMAC-SHA-256 vectors, c=1 dkLen=64 and
   c=80000 dkLen=64.
