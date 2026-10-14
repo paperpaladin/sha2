@@ -8,7 +8,7 @@ PBKDF2 over that.
 - Six hashes: `SHA2_224`, `SHA2_256`, `SHA2_384`, `SHA2_512`, `SHA2_512_224`,
   `SHA2_512_256`.  FIPS 180-4.
 - Streaming: `sha2_init` / `sha2_update` / `sha2_final`, plus a one-shot
-  `sha2()`.  `sha2_final()` takes a const context: it pads a copy, so
+  `sha2()`.  `sha2_final()` takes a const context. It pads a copy, so
   calling it twice returns the same digest and `update()` after `final()`
   continues the same message.  That is CPython hashlib's contract, chosen so
   the behaviour has an outside oracle instead of being an opinion.
@@ -32,7 +32,7 @@ exhaustive length sweep.
 "Most vectors pass" is not a weaker version of this. It means a wrong answer
 exists, and a hash function with a wrong answer has no use at all.
 
-The consequence that shapes the test code: the exhaustive sweep over every
+The consequence that shapes the test code. The exhaustive sweep over every
 length from 0 to 2048 is not a nicety.  Padding bugs live at specific lengths
 (55/56 and 111/112, where the length field stops fitting), and a sampled sweep
 can miss them while a sabotage experiment proves the suite would not have
