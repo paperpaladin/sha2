@@ -256,8 +256,7 @@ also accepts `sha-256`, `256`, `SHA512/256` and similar.
   claim an RFC 6070 pass rate**, because there is no honest one to claim.
 - The upper 64 bits of SHA-512's length field are untested, and
   untestable. Reaching them needs 2^64 bytes of input.  The low 64 bits are
-  exercised past 2^32 bits by a 512MB message.  The code treats the counter as
-  128-bit throughout, but only the bottom half has ever been fed a value.
+  exercised past 2^32 bits by a 512MB message.  Its code treats the counter as 128-bit throughout, but only the bottom half has ever been fed a value.
 - Never run on a big-endian machine.  Every word is loaded and stored one
   byte at a time, so the code should be endian-neutral, but that is an
   argument, not a test, and no big-endian hardware or cross toolchain is

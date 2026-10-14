@@ -32,8 +32,7 @@ exhaustive length sweep.
 "Most vectors pass" is not a weaker version of this. It means a wrong answer
 exists, and a hash function with a wrong answer has no use at all.
 
-The consequence that shapes the test code. The exhaustive sweep over every
-length from 0 to 2048 is not a nicety.  Padding bugs live at specific lengths
+The consequence that shapes the test code. That exhaustive sweep over every length from 0 to 2048 is not a nicety.  Padding bugs live at specific lengths
 (55/56 and 111/112, where the length field stops fitting), and a sampled sweep
 can miss them while a sabotage experiment proves the suite would not have
 noticed.
