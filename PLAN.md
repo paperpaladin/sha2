@@ -8,7 +8,7 @@ PBKDF2 over that.
 - Six hashes: `SHA2_224`, `SHA2_256`, `SHA2_384`, `SHA2_512`, `SHA2_512_224`,
   `SHA2_512_256`.  FIPS 180-4.
 - Streaming: `sha2_init` / `sha2_update` / `sha2_final`, plus a one-shot
-  `sha2()`.  `sha2_final()` takes a **const** context: it pads a copy, so
+  `sha2()`.  `sha2_final()` takes a const context: it pads a copy, so
   calling it twice returns the same digest and `update()` after `final()`
   continues the same message.  That is CPython hashlib's contract, chosen so
   the behaviour has an outside oracle instead of being an opinion.
@@ -16,7 +16,7 @@ PBKDF2 over that.
 - `sha2_pbkdf2` (RFC 8018 section 5.2).  No allocation anywhere in the file.
 - A CLI, `sha2 [-a ALG] [FILE...]`, printing coreutils' exact output format so
   that coreutils can be its oracle.
-- **Not** in the contract: constant-time anything, side-channel resistance,
+- Not in the contract: constant-time anything, side-channel resistance,
   memory wiping, tag comparison, SHA-1, SHA-3, SHA-512/t for t other than 224
   and 256, keyed hashing other than HMAC.
 
@@ -29,7 +29,7 @@ checkpoints standing for 600,000 chained hashes, 1275 HMAC vectors, and zero
 disagreements with CPython hashlib, GNU coreutils and openssl across the
 exhaustive length sweep.
 
-"Most vectors pass" is not a weaker version of this; it means a wrong answer
+"Most vectors pass" is not a weaker version of this. It means a wrong answer
 exists, and a hash function with a wrong answer has no use at all.
 
 The consequence that shapes the test code: the exhaustive sweep over every
@@ -42,13 +42,13 @@ noticed.
 
 Ranked by how little we control them, strongest first.
 
-1. **NIST CAVP byte test vectors** -- `shabytetestvectors.zip` and
+1. NIST CAVP byte test vectors: `shabytetestvectors.zip` and
    `hmactestvectors.zip` from csrc.nist.gov.  Official, byte-exact, and
    including the Monte Carlo mode that chains 100,000 hashes per algorithm and
    so catches state-handling defects a single hash cannot see.  `t/run.sh`
-   fetches them; a failed fetch prints SKIPPED in the oracle roster and
+   fetches them. A failed fetch prints SKIPPED in the oracle roster and
    `SHA2_REQUIRE_CAVP=1` turns that into a failure.
-2. **The constants against their own definitions.**  `tools/genk.py` derives
+2. The constants against their own definitions.  `tools/genk.py` derives
    all 192 round constants and initial hash values from the cube and square
    roots of the first primes, derives the two SHA-512/t IVs by the section
    5.3.6 construction using a Python SHA-512 it first checks against hashlib,
@@ -56,23 +56,23 @@ Ranked by how little we control them, strongest first.
    oracle for the tables that is independent of any test vector, and it
    caught a wrong SHA-224 derivation on its first run (the IV is the second
    32 bits of the fraction, not the first).
-3. **Published vectors in standards documents.**  FIPS 180-4 appendices B and
+3. Published vectors in standards documents.  FIPS 180-4 appendices B and
    C, RFC 4231 cases 1 to 7 for HMAC over all four algorithms it covers, and
    RFC 7914 section 11's two PBKDF2-HMAC-SHA-256 vectors.  RFC 6070's vectors
-   are PBKDF2-HMAC-SHA-1 and cannot be used here; only its inputs are, and the
+   are PBKDF2-HMAC-SHA-1 and cannot be used here. Only its inputs are, and the
    README says so.
-4. **Three independent local implementations**, all of which must agree on
+4. Three independent local implementations, all of which must agree on
    every input: CPython `hashlib` and `hmac`, GNU coreutils `sha224sum` and
    friends (its own SHA code, not OpenSSL's), and `openssl dgst` / `openssl
-   kdf`.  openssl is a reference here and never a dependency -- nothing links
+   kdf`.  openssl is a reference here and never a dependency: nothing links
    against libcrypto.  coreutils has no tool for the two truncated SHA-512
-   variants, which is reported as a skip rather than quietly counted as fewer
+   variants, which is reported as a skip instead of quietly counted as fewer
    comparisons.
-5. **Differential over generated input**: every length from 0 to 2048,
+5. Differential over generated input: every length from 0 to 2048,
    random lengths up to 10MB, the streaming API fed in pseudorandom chunks,
    HMAC key lengths 0 to 200, and one message of 536,870,913 bytes to carry the
    bit length past 2^32.
-6. **The suite against a sabotaged library.**  Three one-character defects are
+6. The suite against a sabotaged library.  Three one-character defects are
    applied to a copy of `sha2.c` on every run and the suite must go red for
    each.  If a sabotage passes, the run fails.
 
@@ -81,8 +81,8 @@ Ranked by how little we control them, strongest first.
 - SHA-1 and SHA-3.  SHA-1 would be the one addition that unlocks RFC 6070 and
   300 more CAVP HMAC vectors, and it is still not worth shipping a broken hash
   to check a test vector with.
-- Constant-time execution and side-channel hardening.  Stated as a limitation
-  rather than attempted, because attempting it halfway is worse than not.
+- Constant-time execution and side-channel hardening.  Stated as a
+  limitation, not attempted, because attempting it halfway is worse than not.
 - SIMD (SHA-NI, AVX2 multi-buffer).  Marked `shortcut:` in `sha2.c` with the
   measured ceiling.
 - A `-c` check mode in the CLI, HMAC or PBKDF2 in the CLI, and filename
@@ -96,7 +96,7 @@ Ranked by how little we control them, strongest first.
       object file exists, not retrofitted.
 - [x] SHA-256 compression, padding, streaming API
       why: everything else is this plus a table.  The constants are generated
-      from their definitions rather than typed in, so the IV derivation for
+      from their definitions, not typed in, so the IV derivation for
       the truncated variants is already proved before they exist.
 - [x] `t/diff.py`: exhaustive 0..2048 sweep against hashlib
       why: padding is what breaks, and three published examples do not cover
@@ -114,14 +114,14 @@ Ranked by how little we control them, strongest first.
       why: the hash-the-long-key branch is the one implementations skip.
 - [x] PBKDF2 (RFC 8018) with RFC 7914's vectors and RFC 6070's inputs
       why: RFC 6070's own digests are HMAC-SHA-1, which has to be said out
-      loud rather than substituted around.
+      loud, not substituted around.
 - [x] CLI, with coreutils' output format so coreutils can diff it
 - [x] CAVP ShortMsg and LongMsg, all six algorithms
 - [x] CAVP Monte Carlo, 600,000 chained hashes
 - [x] CAVP HMAC.rsp, 1275 vectors, SHA-1 sections reported as skipped
 - [x] the 64-bit length counter past 2^32 bits
 - [x] sabotage: three defects, each confirmed to turn the suite red, on every
-      run rather than once
+      run, not once
 - [x] `make bench`, reproducible build, and the harness bug the first ASAN run
       exposed
       why: `| tee` swallowed an ASAN abort and the suite reported 172 passed,
@@ -131,15 +131,15 @@ Ranked by how little we control them, strongest first.
 ### Next, in order
 
 - [ ] big-endian verification
-      why: the code is endian-neutral by construction -- every word is loaded
-      and stored a byte at a time -- but that is an argument, not a test, and
+      why: the code is endian-neutral by construction, every word is loaded
+      and stored a byte at a time, but that is an argument, not a test, and
       no big-endian machine is available here.  `qemu-user` with a cross
-      toolchain would settle it, and until it does the README says untested
-      rather than portable.
+      toolchain would settle it, and until it does the README says
+      untested, not portable.
 - [ ] HKDF (RFC 5869) over the same HMAC
       why: it is about forty lines on top of what exists, and RFC 5869 has
-      seven published vectors, so it arrives with its own oracle rather than
-      needing one invented.  Nothing else in this list has that property.
+      seven published vectors, so it arrives with its own oracle,
+      not needing one invented.  Nothing else in this list has that property.
 - [ ] `sha2_hmac_verify()` with a constant-time comparison, and only that one
       function documented as constant-time
       why: the current advice to callers is "decide for yourself", which is
@@ -151,6 +151,6 @@ Ranked by how little we control them, strongest first.
       for names containing newlines, so the divergence is one special case
       wide and the oracle for closing it already exists.
 - [ ] SIMD core behind runtime dispatch
-      why: last, because it is the only item that cannot change an answer --
-      it is measured against the same vectors either way, and 226 MB/s has
+      why: last, because it is the only item that cannot change an answer.
+      It is measured against the same vectors either way, and 226 MB/s has
       not been a problem for anything.
