@@ -126,7 +126,7 @@ What the differential tests feed them:
   This oracle caught a real derivation error on its first run: SHA-224's IV is
   the second 32 bits of the fractional part of the square roots of the
   9th to 16th primes, not the first.  Eight of the forty-eight IV constants
-  disagreed, and the script was wrong, not `sha2.c`, but the same
+  disagreed, and the script was wrong where `sha2.c` was right, but the same
   mistake made while typing the table in would have produced a library that
   failed every SHA-224 vector.
 
