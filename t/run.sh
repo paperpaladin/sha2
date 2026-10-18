@@ -73,6 +73,33 @@ run "tools/genk.py" python3 tools/genk.py check sha2.c
 printf -- '\n--- unit assertions (FIPS 180-4 examples, padding boundaries)\n'
 run "t/tst unit" ./t/tst unit
 
+# Endian.  There is no big-endian machine, emulator or cross toolchain on
+# this host -- no qemu-user, no cross gcc, x86_64 only -- so the suite cannot
+# run big-endian and does not pretend to.  PLAN.md records the item as
+# blocked and the README says untested, not portable.
+#
+# What can be checked here is the property the port depends on: every
+# byte-order assumption in sha2.c lives in sha2_ld32/st32/ld64/st64, which
+# `tst unit` pins against byte sequences published in FIPS 180-4, and
+# nothing else in the file reaches for the host's order.  That last half
+# needs its own check, because a memcpy into a word plus a byte swap gives
+# the right answer on this machine and the wrong one on the other: every
+# vector stays green, so the vectors cannot see it and this grep is the only
+# thing that can.
+#
+# It is a list of shapes, not a proof.  "union" is in it because a hand
+# written union-punned load was tried as a mutation and survived every other
+# gate here; sha2.c has no union of its own, so flagging the word is free,
+# and sha2.h's context union is not grepped because it is never read through
+# a different member than it was written through.  A construct nobody has
+# thought of still gets through, and only a big-endian run would catch it.
+printf -- '\n--- endian: byte order confined to the four named helpers\n'
+if grep -nE '__BYTE_ORDER|_ENDIAN|bswap|htonl|ntohl|htobe|be32toh|be64toh|memcpy\(&|union|\*[[:space:]]*\([[:space:]]*(const[[:space:]]+)?uint(32|64)_t[[:space:]]*\*' sha2.c; then
+	say "not ok - sha2.c reaches for the host byte order; see the lines above"
+else
+	say "ok - sha2.c has no host-byte-order construct outside the four helpers"
+fi
+
 # Oracle 1: NIST CAVP.  The pass rate is printed per algorithm per file, which
 # is the number this repo is judged on.
 if [ "$HAVE_CAVP" = 1 ]; then
@@ -187,6 +214,8 @@ sab "padding byte 0x80 -> 0x81" \
 	's/c\.buf\[c\.buflen++\] = 0x80;/c.buf[c.buflen++] = 0x81;/'
 sab "length encoding: bit count nlo<<3 -> nlo<<2" \
 	's/uint64_t bitlo = c\.nlo << 3;/uint64_t bitlo = c.nlo << 2;/'
+sab "byte order: sha2_st32 writes its four bytes reversed" \
+	's/p\[0\] = v >> 24; p\[1\] = v >> 16; p\[2\] = v >> 8; p\[3\] = v;/p[3] = v >> 24; p[2] = v >> 16; p[1] = v >> 8; p[0] = v;/'
 
 # The roster reports what happened. Lines 2 through 6 used to be literal
 # printf statements that said "ran" whichever way the run went: openssl is
@@ -215,7 +244,7 @@ printf -- '  2 constants vs FIPS 180-4      ran (192 constants, no network neede
 printf -- '  3 CPython hashlib / hmac       ran (no network needed)\n'
 printf -- '  4 GNU coreutils sha*sum        %s\n' "$co_state"
 printf -- '  5 openssl dgst and kdf         %s\n' "$ssl_state"
-printf -- '  6 three sabotages, each red    ran (no network needed)\n'
+printf -- '  6 four sabotages, each red     ran (no network needed)\n'
 printf -- '  %s check(s) skipped; see the "skip - " lines above\n' "$nskip"
 
 pass=$(grep -c '^ok - ' "$OUT")

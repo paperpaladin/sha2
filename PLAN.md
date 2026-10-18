@@ -129,12 +129,40 @@ Ranked by how little we control them, strongest first.
 
 ### Next, in order
 
-- [ ] big-endian verification
+- [ ] BLOCKED: big-endian verification
       why: the code is endian-neutral by construction, every word is loaded
       and stored a byte at a time, but that is an argument, not a test, and
       no big-endian machine is available here.  `qemu-user` with a cross
       toolchain would settle it, and until it does the README says
       untested, not portable.
+      blocked: nothing on this machine can execute big-endian code.  The
+      host is x86_64; `qemu-user` is not installed and neither is any
+      big-endian `qemu-*` target (the only qemu binaries here are
+      qemu-system-x86_64, qemu-system-i386 and the disk-image tools, and a
+      system emulator for x86 cannot host an s390x guest).  There is no
+      cross toolchain, no `binfmt_misc` registration and no container
+      runtime.  clang will emit code for s390x, ppc64, mips, mips64 and
+      sparcv9, but there is no sysroot to link against and nothing to run
+      the result with, so it would be a compile, not a verification.
+      needs: `qemu-user` (Debian trixie candidate 1:10.0.13+ds-0+deb13u1)
+      and one of gcc-s390x-linux-gnu or gcc-powerpc64-linux-gnu (both
+      4:14.2.0-1), then `t/run.sh` teaching to build the suite a second
+      time with the cross compiler and run it under `qemu-s390x -L
+      /usr/s390x-linux-gnu`.  Real big-endian hardware would be better
+      still.  All three are candidates in the configured apt repository;
+      none is installed, and installing them is not this repo's decision.
+      done instead: every byte-order assumption in sha2.c now lives in
+      `sha2_ld32`, `sha2_st32`, `sha2_ld64` and `sha2_st64` and nowhere
+      else -- the digest output loop and PBKDF2's block counter used to
+      open-code the shifts a second and third time.  `tst unit` pins those
+      four against byte sequences published in FIPS 180-4, and refuses a
+      palindromic test vector, since 0x00000000 passes whether or not the
+      helper swaps.  `t/run.sh` greps sha2.c for the host-byte-order shapes
+      (a word-pointer cast, a memcpy into a word, a byte swap, a union),
+      because those are correct here and wrong there, so no vector can see
+      them.  A byte-swapped `sha2_st32` is the fourth standing sabotage.
+      None of that is a big-endian run, and the README says so in those
+      words.
 - [ ] HKDF (RFC 5869) over the same HMAC
       why: it is about forty lines on top of what exists, and RFC 5869 has
       seven published vectors, so it arrives with its own oracle,

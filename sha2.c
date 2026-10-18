@@ -153,13 +153,30 @@ int sha2_by_name(const char *name, enum sha2_alg *out)
 #define CH(x, y, z)  (((x) & (y)) ^ (~(x) & (z)))
 #define MAJ(x, y, z) (((x) & (y)) ^ ((x) & (z)) ^ ((y) & (z)))
 
-static uint32_t ld32(const unsigned char *p)
+/* ------------------------------------------------------- byte order ---
+ * These four functions are the ONLY place in this file that assumes
+ * anything about byte order, and they assume nothing about the host's:
+ * every word is built from, or taken apart into, individually indexed
+ * bytes, so the same source produces the same bytes on a big-endian
+ * machine.  Nothing else here may cast a byte pointer to a word pointer,
+ * copy bytes into a word wholesale, or consult the compiler's host byte
+ * order macros; t/run.sh greps sha2.c for those shapes and fails if one
+ * appears.  (It greps this file, so this comment must not spell them out:
+ * a detector that contains what it detects reports itself.)
+ *
+ * They are deliberately not static and deliberately not in sha2.h: t/tst.c
+ * declares them itself and checks them against byte sequences published in
+ * FIPS 180-4, because the claim "endian-neutral by construction" is only
+ * worth something if the construction is pinned by a test.  They are not
+ * part of the API and callers should not use them.
+ */
+uint32_t sha2_ld32(const unsigned char *p)
 {
 	return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 |
 	       (uint32_t)p[2] << 8 | p[3];
 }
 
-static void st32(unsigned char *p, uint32_t v)
+void sha2_st32(unsigned char *p, uint32_t v)
 {
 	p[0] = v >> 24; p[1] = v >> 16; p[2] = v >> 8; p[3] = v;
 }
@@ -171,7 +188,7 @@ static void compress256(uint32_t *h, const unsigned char *p, size_t nblk)
 		uint32_t w[64], a = h[0], b = h[1], c = h[2], d = h[3];
 		uint32_t e = h[4], f = h[5], g = h[6], hh = h[7];
 		for (int t = 0; t < 16; t++)
-			w[t] = ld32(p + 4 * t);
+			w[t] = sha2_ld32(p + 4 * t);
 		for (int t = 16; t < 64; t++) {
 			uint32_t x = w[t - 15], y = w[t - 2];
 			uint32_t s0 = ROR32(x, 7) ^ ROR32(x, 18) ^ (x >> 3);
@@ -194,9 +211,15 @@ static void compress256(uint32_t *h, const unsigned char *p, size_t nblk)
 
 #define ROR64(x, n) (((x) >> (n)) | ((x) << (64 - (n))))
 
-static uint64_t ld64(const unsigned char *p)
+uint64_t sha2_ld64(const unsigned char *p)
 {
-	return (uint64_t)ld32(p) << 32 | ld32(p + 4);
+	return (uint64_t)sha2_ld32(p) << 32 | sha2_ld32(p + 4);
+}
+
+void sha2_st64(unsigned char *p, uint64_t v)
+{
+	sha2_st32(p, (uint32_t)(v >> 32));
+	sha2_st32(p + 4, (uint32_t)v);
 }
 
 /* SHA-384/512 compression, FIPS 180-4 section 6.4.2.  Same shape as
@@ -208,7 +231,7 @@ static void compress512(uint64_t *h, const unsigned char *p, size_t nblk)
 		uint64_t w[80], a = h[0], b = h[1], c = h[2], d = h[3];
 		uint64_t e = h[4], f = h[5], g = h[6], hh = h[7];
 		for (int t = 0; t < 16; t++)
-			w[t] = ld64(p + 8 * t);
+			w[t] = sha2_ld64(p + 8 * t);
 		for (int t = 16; t < 80; t++) {
 			uint64_t x = w[t - 15], y = w[t - 2];
 			uint64_t s0 = ROR64(x, 1) ^ ROR64(x, 8) ^ (x >> 7);
@@ -292,6 +315,7 @@ void sha2_final(const struct sha2_ctx *cc, unsigned char *out)
 	size_t lf = bs / 8;		/* length field: 8 or 16 bytes */
 	uint64_t bitlo = c.nlo << 3;
 	uint64_t bithi = (c.nhi << 3) | (c.nlo >> 61);
+	unsigned char full[SHA2_DIGEST_MAX];
 	size_t i;
 
 	c.buf[c.buflen++] = 0x80;
@@ -301,21 +325,24 @@ void sha2_final(const struct sha2_ctx *cc, unsigned char *out)
 		c.buflen = 0;
 	}
 	memset(c.buf + c.buflen, 0, bs - lf - c.buflen);
-	if (lf == 16) {
-		st32(c.buf + bs - 16, (uint32_t)(bithi >> 32));
-		st32(c.buf + bs - 12, (uint32_t)bithi);
-	}
-	st32(c.buf + bs - 8, (uint32_t)(bitlo >> 32));
-	st32(c.buf + bs - 4, (uint32_t)bitlo);
+	if (lf == 16)
+		sha2_st64(c.buf + bs - 16, bithi);
+	sha2_st64(c.buf + bs - 8, bitlo);
 	absorb(&c, c.buf, 1);
 
 	/* Big-endian state, truncated to the digest length.  That truncation is
 	 * the whole of SHA-224, SHA-384 and the two SHA-512/t variants beyond
-	 * their differing IVs. */
-	for (i = 0; i < DSZ[c.alg]; i++)
-		out[i] = wide(c.alg)
-			? (unsigned char)(c.h.q[i / 8] >> (56 - 8 * (i % 8)))
-			: (unsigned char)(c.h.w[i / 4] >> (24 - 8 * (i % 4)));
+	 * their differing IVs.  SHA-512/224 cuts a word in half (28 bytes of a
+	 * 64-byte state), so the whole state is serialised through the helpers
+	 * and then copied, rather than the output loop open-coding the shifts
+	 * a second time. */
+	for (i = 0; i < 8; i++) {
+		if (wide(c.alg))
+			sha2_st64(full + 8 * i, c.h.q[i]);
+		else
+			sha2_st32(full + 4 * i, c.h.w[i]);
+	}
+	memcpy(out, full, DSZ[c.alg]);
 }
 
 void sha2(enum sha2_alg alg, const void *data, size_t len, unsigned char *out)
@@ -406,10 +433,7 @@ int sha2_pbkdf2(enum sha2_alg alg, const void *pw, size_t pwlen,
 
 	sha2_hmac_init(&base, alg, pw, pwlen);
 	for (blk = 1; outlen; blk++) {
-		be[0] = (unsigned char)(blk >> 24);
-		be[1] = (unsigned char)(blk >> 16);
-		be[2] = (unsigned char)(blk >> 8);
-		be[3] = (unsigned char)blk;
+		sha2_st32(be, blk);	/* INT_BE32(i), RFC 8018 5.2 */
 
 		c = base;
 		sha2_hmac_update(&c, salt, saltlen);

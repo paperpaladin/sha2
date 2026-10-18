@@ -611,6 +611,123 @@ parse_error:
 	fclose(f);
 }
 
+/* ----------------------------------------------------------- byte order ---
+ * sha2.c's four byte-order helpers.  Declared here rather than in sha2.h
+ * because they are internal to the implementation and not API; sha2.c
+ * exports them for exactly this test, and the comment above them there says
+ * so.  They are the only place in the library that assumes a byte order.
+ *
+ * No big-endian machine, emulator or cross toolchain exists on this host, so
+ * this is NOT a substitute for running the suite big-endian.  What it does
+ * is pin the contract those helpers have to satisfy for the rest of the file
+ * to be endian-neutral: words go to and come from bytes in a fixed order
+ * that has nothing to do with the host's.
+ */
+uint32_t sha2_ld32(const unsigned char *p);
+void sha2_st32(unsigned char *p, uint32_t v);
+uint64_t sha2_ld64(const unsigned char *p);
+void sha2_st64(unsigned char *p, uint64_t v);
+
+static void cko(const char *what, int good)
+{
+	if (good) {
+		printf("ok - %s\n", what);
+	} else {
+		printf("not ok - %s\n", what);
+		fails++;
+	}
+}
+
+static uint32_t rev32(uint32_t v)
+{
+	return v << 24 | (v & 0xff00u) << 8 | (v >> 8 & 0xff00u) | v >> 24;
+}
+
+static uint64_t rev64(uint64_t v)
+{
+	return (uint64_t)rev32((uint32_t)v) << 32 | rev32((uint32_t)(v >> 32));
+}
+
+static void endian(void)
+{
+	/* Word-to-byte pairs taken from FIPS 180-4, which prints both halves
+	 * of each one.  Section 5.1.1's padded block for "abc" gives the
+	 * input direction (W0 = 61626380 over the bytes 'a' 'b' 'c' 80), and
+	 * appendices B.1 and C.1 print the digests of "abc" both as words and
+	 * as byte strings.  The expected bytes are therefore external data.
+	 */
+	static const struct { unsigned char b[4]; uint32_t w; } v32[] = {
+		{ { 'a', 'b', 'c', 0x80 },     0x61626380u },	/* 5.1.1 W0  */
+		{ { 0xba, 0x78, 0x16, 0xbf },  0xba7816bfu },	/* B.1 H0    */
+		{ { 0x8f, 0x01, 0xcf, 0xea },  0x8f01cfeau },	/* B.1 H1    */
+		{ { 0x41, 0x41, 0x40, 0xde },  0x414140deu },	/* B.1 H2    */
+		{ { 0xf2, 0x00, 0x15, 0xad },  0xf20015adu },	/* B.1 H7    */
+	};
+	static const struct { unsigned char b[8]; uint64_t w; } v64[] = {
+		{ { 'a', 'b', 'c', 0x80, 0, 0, 0, 0 },
+		  0x6162638000000000ull },			/* C.1 W0    */
+		{ { 0xdd, 0xaf, 0x35, 0xa1, 0x93, 0x61, 0x7a, 0xba },
+		  0xddaf35a193617abaull },			/* C.1 H0    */
+		{ { 0xcc, 0x41, 0x73, 0x49, 0xae, 0x20, 0x41, 0x31 },
+		  0xcc417349ae204131ull },			/* C.1 H1    */
+		{ { 0x2a, 0x9a, 0xc9, 0x4f, 0xa5, 0x4c, 0xa4, 0x9f },
+		  0x2a9ac94fa54ca49full },			/* C.1 H7    */
+	};
+	const size_t n32 = sizeof v32 / sizeof *v32;
+	const size_t n64 = sizeof v64 / sizeof *v64;
+	unsigned char d[SHA2_DIGEST_MAX], got[8];
+	int asym = 1, ld = 1, st = 1;
+	size_t i;
+
+	/* A byte-order test on symmetric data proves nothing: 0x00000000 and
+	 * 0xffffffff serialise to themselves reversed, so a helper that swaps
+	 * passes on them.  Every pair above must therefore differ from its
+	 * own reversal, and that is asserted rather than eyeballed, so a
+	 * symmetric row added later is a failure and not a quiet weakening.
+	 */
+	for (i = 0; i < n32; i++)
+		asym &= rev32(v32[i].w) != v32[i].w;
+	for (i = 0; i < n64; i++)
+		asym &= rev64(v64[i].w) != v64[i].w;
+	cko("byte-order vectors are asymmetric (a swapped helper fails them)",
+	    asym);
+
+	for (i = 0; i < n32; i++)
+		ld &= sha2_ld32(v32[i].b) == v32[i].w;
+	cko("sha2_ld32 reads 4 bytes big-endian (5 FIPS 180-4 words)", ld);
+
+	for (st = 1, i = 0; i < n32; i++) {
+		sha2_st32(got, v32[i].w);
+		st &= !memcmp(got, v32[i].b, 4);
+	}
+	cko("sha2_st32 writes 4 bytes big-endian (5 FIPS 180-4 words)", st);
+
+	for (ld = 1, i = 0; i < n64; i++)
+		ld &= sha2_ld64(v64[i].b) == v64[i].w;
+	cko("sha2_ld64 reads 8 bytes big-endian (4 FIPS 180-4 words)", ld);
+
+	for (st = 1, i = 0; i < n64; i++) {
+		sha2_st64(got, v64[i].w);
+		st &= !memcmp(got, v64[i].b, 8);
+	}
+	cko("sha2_st64 writes 8 bytes big-endian (4 FIPS 180-4 words)", st);
+
+	/* And the table itself is checked against the library, whose digests
+	 * the CAVP vectors validate: rows 1..4 of v32 are words 0, 1, 2 and 7
+	 * of SHA-256("abc"), rows 1..3 of v64 are words 0, 1 and 7 of
+	 * SHA-512("abc").  A typo in the table above would otherwise weaken
+	 * this test silently instead of failing it.
+	 */
+	sha2(SHA2_256, "abc", 3, d);
+	st = !memcmp(d, v32[1].b, 4) && !memcmp(d + 4, v32[2].b, 4) &&
+	     !memcmp(d + 8, v32[3].b, 4) && !memcmp(d + 28, v32[4].b, 4);
+	sha2(SHA2_512, "abc", 3, d);
+	st &= !memcmp(d, v64[1].b, 8) && !memcmp(d + 8, v64[2].b, 8) &&
+	      !memcmp(d + 56, v64[3].b, 8);
+	cko("byte-order vectors are the bytes of the digests FIPS publishes",
+	    st);
+}
+
 static void unit(void)
 {
 	/* FIPS 180-4 appendix B: the published worked examples. */
@@ -639,6 +756,7 @@ static void unit(void)
 	    "47d0d13c5d85f2b0ff8318d2877eec2f"
 	    "63b931bd47417a81a538327af927da3e", "sha512(empty)");
 
+	endian();
 	boundaries();
 	restate();
 	hmac_rfc4231();

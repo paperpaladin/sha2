@@ -132,17 +132,18 @@ What the differential tests feed them:
 
 ## Watching the harness fail
 
-A suite that has never been seen failing is not evidence.  Three
-one-character defects are injected into a copy of `sha2.c` on every
-`make test` run, compiled, and run against the unit assertions plus CAVP
-SHA256ShortMsg and CAVP SHA512Monte.  If a sabotaged copy still passes, the
-run fails.
+A suite that has never been seen failing is not evidence.  Four small
+defects, three of them one character, are injected into a copy of `sha2.c`
+on every `make test` run, compiled, and run against the unit assertions plus
+CAVP SHA256ShortMsg and CAVP SHA512Monte.  If a sabotaged copy still passes,
+the run fails.
 
 | sabotage | result |
 | --- | --- |
-| round constant `K256[0]` `0x428a2f98` -> `0x428a2f99` | **31 checks red.**  `tools/genk.py` reports 1 of 64 constants differing from its definition.  CAVP SHA256ShortMsg 0/65.  SHA512Monte stays green, correctly: that constant is only in the 32-bit core. |
-| padding byte `0x80` -> `0x81` | **56 checks red.**  SHA256ShortMsg 0/65, SHA512Monte 0/100. |
-| bit length `nlo << 3` -> `nlo << 2` | **54 checks red.**  SHA256ShortMsg scores **1/65**. |
+| round constant `K256[0]` `0x428a2f98` -> `0x428a2f99` | **32 checks red.**  `tools/genk.py` reports 1 of 64 constants differing from its definition.  CAVP SHA256ShortMsg 0/65.  SHA512Monte stays green, correctly: that constant is only in the 32-bit core. |
+| padding byte `0x80` -> `0x81` | **57 checks red.**  SHA256ShortMsg 0/65, SHA512Monte 0/100. |
+| bit length `nlo << 3` -> `nlo << 2` | **55 checks red.**  SHA256ShortMsg scores **1/65**. |
+| `sha2_st32` writes its four bytes reversed | **59 checks red.**  Both vector files score 0, and the four byte-order assertions in `tst unit` name the helper. |
 
 That last row is the one worth reading.  The single surviving vector is the
 empty message, where `0 << 3` and `0 << 2` are both zero, so the
@@ -184,7 +185,7 @@ make clean
 ```
 
 `make test` needs the network the first time, to fetch the CAVP archives.
-It prints 243 `ok` lines, an oracle roster saying which of the six oracles
+It prints 251 `ok` lines, an oracle roster saying which of the six oracles
 actually ran, and `N passed, M failed`.
 
 ## API
@@ -257,10 +258,62 @@ also accepts `sha-256`, `256`, `SHA512/256` and similar.
 - The upper 64 bits of SHA-512's length field are untested, and
   untestable. Reaching them needs 2^64 bytes of input.  The low 64 bits are
   exercised past 2^32 bits by a 512MB message.  Its code treats the counter as 128-bit throughout, but only the bottom half has ever been fed a value.
-- Never run on a big-endian machine.  Every word is loaded and stored one
-  byte at a time, so the code should be endian-neutral, but that is an
-  argument, not a test, and no big-endian hardware or cross toolchain is
-  available here.  Do not assume it works there.
+- **Never run on a big-endian machine.**  This is the honest headline of
+  this section and nothing below softens it.  No big-endian hardware,
+  emulator or cross toolchain exists on the machine this was built on: it is
+  x86_64, `qemu-user` is not installed (the only qemu here is the x86 system
+  emulator, which cannot host an s390x guest), there is no cross gcc, no
+  `binfmt_misc` entry and no container runtime.  Settling it needs
+  `qemu-user` plus `gcc-s390x-linux-gnu` or `gcc-powerpc64-linux-gnu`, and
+  then the suite run a second time under `qemu-s390x`.  `PLAN.md` carries
+  the item as BLOCKED with that shopping list.  Until someone runs it, the
+  six algorithms are unverified on a big-endian host and you should not
+  assume they work there.
+
+  What *is* checked here, and what it is worth:
+
+  - Every byte-order assumption in `sha2.c` is in four functions,
+    `sha2_ld32`, `sha2_st32`, `sha2_ld64` and `sha2_st64`, and nowhere
+    else.  Each builds a word from, or takes one apart into, individually
+    indexed bytes, which is the construction that makes the file
+    endian-neutral.  They are exported but deliberately absent from
+    `sha2.h`: they are not API, they exist in that form so the tests can
+    pin them.  The digest output loop and PBKDF2's `INT_BE32` counter used
+    to open-code the same shifts, so the assumption was in three places
+    and only one of them was named.
+  - `tst unit` checks those four against word/byte pairs printed in FIPS
+    180-4 itself: section 5.1.1's padded block for "abc" and the digests of
+    "abc" in appendices B.1 and C.1, which the document gives both as words
+    and as byte strings.  The expected bytes are a published document's,
+    not this repo's opinion, and they are cross-checked against the digests
+    the library produces so a typo in the table fails instead of quietly
+    weakening the test.
+  - Those vectors are all asymmetric, and the suite asserts it.  A
+    byte-order test over `0x00000000` or `0xffffffff` passes whether or not
+    the helper swaps, so a palindromic row added later is a failure rather
+    than a silent weakening.  Planting one turns exactly that check red and
+    leaves the other five green, which is the point of having it.
+  - `t/run.sh` greps `sha2.c` for host-byte-order shapes: a byte-pointer
+    cast to a word pointer, a `memcpy` into a word, a byte swap, a union.
+    This is the only gate that can see the defect that matters, because a
+    `memcpy` plus a byte swap produces **the correct answer on this
+    machine**: all 1286 CAVP vectors, all 1275 HMAC vectors, hashlib,
+    coreutils and openssl stay green, and the code is still wrong on a
+    big-endian host.  That mutation was planted and every other gate passed
+    it.
+  - A byte-swapped `sha2_st32` is one of the four sabotages applied on
+    every run.
+
+  And what it is not.  None of this is a big-endian run.  The grep is a
+  list of shapes that have been seen in real code, not a proof: a
+  union-punned load was tried as a mutation and survived every gate until
+  `union` was added to the list, and a construct nobody has thought of
+  would survive it too.  `struct sha2_ctx` also contains a
+  `union { uint32_t w[8]; uint64_t q[8]; }`, so the *bytes* of a context do
+  differ between hosts.  Nothing reads that union through a different
+  member than it wrote, and the API never serialises a context, so it is
+  not a portability bug; it would become one the moment someone persisted
+  or transmitted a context, and that is not supported.
 - Not constant-time, not hardened, no memory wiping.  See the top of this
   file.  There is no `sha2_hmac_verify()` precisely because a correct one
   needs a constant-time comparison and this file does not provide one.
